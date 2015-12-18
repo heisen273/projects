@@ -18,13 +18,6 @@ def print_ships(board):
 		print ' '.join(str(e) for e in row)
 print_board(board)
 
-#def random_row(board):
-#    return randint(0, len(board) - 1)
-#
-#
-#def random_col(board):
-#    return randint(0, len(board) - 1)
-#
 def random_dot():
 	l=random.sample(range(0,99),8)
 	for item in l:
@@ -36,19 +29,15 @@ def random_dot():
 			ship_col=item%10
 	return [ship_row,ship_col]	
 dot=[]
-for i in range(0,8):
+for i in range(0,10):
 	dot=random_dot()
 	ships[dot[0]][dot[1]]=1
-print "####################################"
-print_ships(ships)
-print dot
 for turn in range(10):
 	print "GUESS MUST BE BETWEEN 0 AND 9"
 	guess_row = int(raw_input("Guess Row:"))
 	guess_col = int(raw_input("Guess Col:"))
 	print "GUESS MUST BE BETWEEN 0 AND 9"
 	sys.stderr.write("\x1b[2J\x1b[H")
-	print_ships(ships)
 
         if ships[guess_row][guess_col]==1:
                 print "Congratulations! You sank my battleship!"
