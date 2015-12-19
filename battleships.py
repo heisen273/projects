@@ -1,4 +1,6 @@
 import random
+import sys
+print(chr(27) + "[2J")
 board = []
 ships=[]
 
@@ -16,26 +18,13 @@ def print_ships(board):
 		print ' '.join(str(e) for e in row)
 print_board(board)
 
-def random_row(board):
-    return randint(0, len(board) - 1)
-#    if randint(0, len(board) - 1)
-
-def random_col(board):
-    return randint(0, len(board) - 1)
-
-#def ship2_row():
-#       global ship2_row
-#ship2=[[0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7],[7,8],[8,9]]
-#ship2_s=random_row(board)
-#ship2_row=random.sample([[0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7],[7,8],[8,9]],<ship2_s,2)
-#ship2_col=
-
-#def ship1():
-#        global ship1_row
-#        global ship1_col
-#        ship1_row = random_row(board)
-#        ship1_col = random_col(board)
-
+#def random_row(board):
+#    return randint(0, len(board) - 1)
+#
+#
+#def random_col(board):
+#    return randint(0, len(board) - 1)
+#
 def random_dot():
 	l=random.sample(range(0,99),8)
 	for item in l:
@@ -53,17 +42,14 @@ for i in range(0,8):
 print "####################################"
 print_ships(ships)
 print dot
-#def random_ship ():
-
-#ship_row = random_row(board)
-#ship_col = random_col(board)
 for turn in range(10):
-        guess_row = int(raw_input("Guess Row:"))
-        guess_col = int(raw_input("Guess Col:"))
+	print "GUESS MUST BE BETWEEN 0 AND 9"
+	guess_row = int(raw_input("Guess Row:"))
+	guess_col = int(raw_input("Guess Col:"))
+	print "GUESS MUST BE BETWEEN 0 AND 9"
+	sys.stderr.write("\x1b[2J\x1b[H")
+	print_ships(ships)
 
-#        print ship_row
-#        print ship_col
-# Write your code below!
         if ships[guess_row][guess_col]==1:
                 print "Congratulations! You sank my battleship!"
                 board[guess_row][guess_col]="\033[1;31mX\033[1;m"
@@ -76,7 +62,6 @@ for turn in range(10):
         else:
                 print "You missed my battleship!"
                 board[guess_row][guess_col]="X"
-   # board[guess_col]="X"
                 print_board(board)
                 if turn==9:
                         print "GAME OVER, no more turns"
