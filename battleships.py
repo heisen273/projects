@@ -27,11 +27,36 @@ def random_dot():
 		else:
 			ship_row=item//10
 			ship_col=item%10
-	return [ship_row,ship_col]	
+	return [ship_row,ship_col]
+	
 dot=[]
 for i in range(0,10):
 	dot=random_dot()
 	ships[dot[0]][dot[1]]=1
+
+def spawner(dot):
+	
+	
+	how the fuck do we spawn the ship?(
+
+
+def random_ship():
+	
+	if ship_col<=1 or ship_col>=8:
+		#you cannot spawn 3-block horisontal ship
+	elif ship_row<=1 or ship_row>=8:
+		#you cannot spawn 3-block vertical ship
+        elif ship_col<=0 or ship_col>=9:
+                #you cannot spawn 2-block horisontal ship
+        elif ship_row<=1 or ship_row>=9:
+                #you cannot spawn 2-block vertical ship
+        elif ship_col<=2 or ship_col>=7:
+                #you cannot spawn 4-block horisontal ship
+        elif ship_row<=2 or ship_row>=7:
+                #you cannot spawn 4-block vertical ship
+	
+
+
 for turn in range(10):
 	print "GUESS MUST BE BETWEEN 0 AND 9"
 	guess_row = int(raw_input("Guess Row:"))
