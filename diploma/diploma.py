@@ -19,18 +19,24 @@ def diploma():
     	result1 = (2.5 * 22.4 * mass) / (29)
     	result2 = (3 * 22.4 * mass) / (30)
     	result3 = (3.5 * 22.4 * mass) / (31)
+	print ''
+	print ''
 	if x == 0:
+		print ''
 		print "Si + 2H2O = SiO2 + 2H2 "
         	print result0, "gramms of Hydrogen was allocated"
 
 	elif x == 1:
+		print ''
 		print "2SiH + 4H2O = 2SiO2 + 5H2 "
         	print result1, "gramms of Hydrogen was allocated"
 
 	elif x == 2:
+		print ''
 		print "SiH2 + 2 H2O = SiO2 + 3H2"
 		print result2, "gramms of Hydrogen was allocated"
 	elif x == 3:
+		print ''
 		print "2SiH3 + 4H2O = 2SiO2 + 7H2"
         	print result3, "gramms of Hydrogen was allocated"
 	plt.plot([result0,result1,result2,result3],[0,1,2,3],'ro-')
