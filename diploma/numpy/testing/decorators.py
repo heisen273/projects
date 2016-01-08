@@ -13,11 +13,11 @@ function name, setup and teardown functions and so on - see
 ``nose.tools`` for more information.
 
 """
-import warnings
-import sys
+from __future__ import division, absolute_import, print_function
 
-from numpy.testing.utils import \
-        WarningManager, WarningMessage
+import warnings
+import collections
+
 
 def slow(t):
     """
@@ -122,33 +122,33 @@ def skipif(skip_condition, msg=None):
         import nose
 
         # Allow for both boolean or callable skip conditions.
-        if callable(skip_condition):
-            skip_val = lambda : skip_condition()
+        if isinstance(skip_condition, collections.Callable):
+            skip_val = lambda: skip_condition()
         else:
-            skip_val = lambda : skip_condition
+            skip_val = lambda: skip_condition
 
         def get_msg(func,msg=None):
             """Skip message with information about function being skipped."""
-            if msg is None: 
+            if msg is None:
                 out = 'Test skipped due to test condition'
-            else: 
-                out = '\n'+msg
+            else:
+                out = msg
 
-            return "Skipping test: %s%s" % (func.__name__,out)
+            return "Skipping test: %s: %s" % (func.__name__, out)
 
         # We need to define *two* skippers because Python doesn't allow both
         # return with value and yield inside the same function.
         def skipper_func(*args, **kwargs):
             """Skipper for normal test functions."""
             if skip_val():
-                raise nose.SkipTest(get_msg(f,msg))
+                raise nose.SkipTest(get_msg(f, msg))
             else:
                 return f(*args, **kwargs)
 
         def skipper_gen(*args, **kwargs):
             """Skipper for test generators."""
             if skip_val():
-                raise nose.SkipTest(get_msg(f,msg))
+                raise nose.SkipTest(get_msg(f, msg))
             else:
                 for x in f(*args, **kwargs):
                     yield x
@@ -158,7 +158,7 @@ def skipif(skip_condition, msg=None):
             skipper = skipper_gen
         else:
             skipper = skipper_func
-            
+
         return nose.tools.make_decorator(f)(skipper)
 
     return skip_decorator
@@ -198,19 +198,20 @@ def knownfailureif(fail_condition, msg=None):
         msg = 'Test skipped due to known failure'
 
     # Allow for both boolean or callable known failure conditions.
-    if callable(fail_condition):
-        fail_val = lambda : fail_condition()
+    if isinstance(fail_condition, collections.Callable):
+        fail_val = lambda: fail_condition()
     else:
-        fail_val = lambda : fail_condition
+        fail_val = lambda: fail_condition
 
     def knownfail_decorator(f):
         # Local import to avoid a hard nose dependency and only incur the
         # import time overhead at actual test-time.
         import nose
-        from noseclasses import KnownFailureTest
+        from .noseclasses import KnownFailureTest
+
         def knownfailer(*args, **kwargs):
             if fail_val():
-                raise KnownFailureTest, msg
+                raise KnownFailureTest(msg)
             else:
                 return f(*args, **kwargs)
         return nose.tools.make_decorator(f)(knownfailer)
@@ -246,25 +247,20 @@ def deprecated(conditional=True):
         # Local import to avoid a hard nose dependency and only incur the
         # import time overhead at actual test-time.
         import nose
-        from noseclasses import KnownFailureTest
 
         def _deprecated_imp(*args, **kwargs):
             # Poor man's replacement for the with statement
-            ctx = WarningManager(record=True)
-            l = ctx.__enter__()
-            warnings.simplefilter('always')
-            try:
+            with warnings.catch_warnings(record=True) as l:
+                warnings.simplefilter('always')
                 f(*args, **kwargs)
                 if not len(l) > 0:
                     raise AssertionError("No warning raised when calling %s"
                             % f.__name__)
                 if not l[0].category is DeprecationWarning:
-                    raise AssertionError("First warning for %s is not a " \
+                    raise AssertionError("First warning for %s is not a "
                             "DeprecationWarning( is %s)" % (f.__name__, l[0]))
-            finally:
-                ctx.__exit__()
 
-        if callable(conditional):
+        if isinstance(conditional, collections.Callable):
             cond = conditional()
         else:
             cond = conditional

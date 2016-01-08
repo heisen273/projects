@@ -14,7 +14,11 @@ of the subplot in the figure.
 
 """
 
-from __future__ import division
+from __future__ import (absolute_import, division, print_function,
+                        unicode_literals)
+
+from matplotlib.externals import six
+from matplotlib.externals.six.moves import zip
 
 import matplotlib
 rcParams = matplotlib.rcParams
@@ -22,6 +26,7 @@ rcParams = matplotlib.rcParams
 import matplotlib.transforms as mtransforms
 
 import numpy as np
+import warnings
 
 class GridSpecBase(object):
     """
@@ -43,7 +48,7 @@ class GridSpecBase(object):
         self.set_width_ratios(width_ratios)
 
     def get_geometry(self):
-        'get the geometry of the grid, eg 2,3'
+        'get the geometry of the grid, e.g., 2,3'
         return self._nrows, self._ncols
 
     def get_subplot_params(self, fig=None):
@@ -100,7 +105,7 @@ class GridSpecBase(object):
             cellHeights = [cellH] * nrows
 
         sepHeights = [0] + ([sepH] * (nrows-1))
-        cellHs = np.add.accumulate(np.ravel(zip(sepHeights, cellHeights)))
+        cellHs = np.add.accumulate(np.ravel(list(zip(sepHeights, cellHeights))))
 
 
         # calculate accumulated widths of rows
@@ -115,7 +120,7 @@ class GridSpecBase(object):
             cellWidths = [cellW] * ncols
 
         sepWidths = [0] + ([sepW] * (ncols-1))
-        cellWs = np.add.accumulate(np.ravel(zip(sepWidths, cellWidths)))
+        cellWs = np.add.accumulate(np.ravel(list(zip(sepWidths, cellWidths))))
 
 
 
@@ -218,7 +223,7 @@ class GridSpec(GridSpecBase):
         the current value, if set, otherwise to rc.
         """
 
-        for k, v in kwargs.items():
+        for k, v in six.iteritems(kwargs):
             if k in self._AllowedKeys:
                 setattr(self, k, v)
             else:
@@ -227,20 +232,24 @@ class GridSpec(GridSpecBase):
 
         from matplotlib import _pylab_helpers
         from matplotlib.axes import SubplotBase
-        for figmanager in _pylab_helpers.Gcf.figs.values():
+        for figmanager in six.itervalues(_pylab_helpers.Gcf.figs):
             for ax in figmanager.canvas.figure.axes:
                 # copied from Figure.subplots_adjust
                 if not isinstance(ax, SubplotBase):
                     # Check if sharing a subplots axis
                     if ax._sharex is not None and isinstance(ax._sharex, SubplotBase):
-                        ax._sharex.update_params()
-                        ax.set_position(ax._sharex.figbox)
+                        if ax._sharex.get_subplotspec().get_gridspec() == self:
+                            ax._sharex.update_params()
+                            ax.set_position(ax._sharex.figbox)
                     elif ax._sharey is not None and isinstance(ax._sharey,SubplotBase):
-                        ax._sharey.update_params()
-                        ax.set_position(ax._sharey.figbox)
+                        if ax._sharey.get_subplotspec().get_gridspec() == self:
+                            ax._sharey.update_params()
+                            ax.set_position(ax._sharey.figbox)
                 else:
-                    ax.update_params()
-                    ax.set_position(ax.figbox)
+                    ss = ax.get_subplotspec().get_topmost_subplotspec()
+                    if ss.get_gridspec() == self:
+                        ax.update_params()
+                        ax.set_position(ax.figbox)
 
 
 
@@ -267,81 +276,42 @@ class GridSpec(GridSpecBase):
         return [k for k in self._AllowedKeys if getattr(self, k)]
 
 
-    def tight_layout(self, fig, renderer=None, pad=1.2, h_pad=None, w_pad=None, rect=None):
+    def tight_layout(self, fig, renderer=None, pad=1.08, h_pad=None, w_pad=None, rect=None):
         """
         Adjust subplot parameters to give specified padding.
 
         Parameters:
-        
+
         pad : float
             padding between the figure edge and the edges of subplots, as a fraction of the font-size.
         h_pad, w_pad : float
             padding (height/width) between edges of adjacent subplots.
             Defaults to `pad_inches`.
+        rect : if rect is given, it is interpreted as a rectangle
+            (left, bottom, right, top) in the normalized figure
+            coordinate that the whole subplots area (including
+            labels) will fit into. Default is (0, 0, 1, 1).
         """
 
-        from tight_layout import auto_adjust_subplotpars, get_renderer
+        from .tight_layout import (get_subplotspec_list,
+                                   get_tight_layout_figure,
+                                   get_renderer)
+
+        subplotspec_list = get_subplotspec_list(fig.axes, grid_spec=self)
+        if None in subplotspec_list:
+            warnings.warn("This figure includes Axes that are not "
+                          "compatible with tight_layout, so its "
+                          "results might be incorrect.")
 
         if renderer is None:
             renderer = get_renderer(fig)
 
-        subplot_list = []
-        num1num2_list = []
-        subplot_dict = {}
-        
-        for ax in fig.axes:
-            locator = ax.get_axes_locator()
-            if hasattr(locator, "get_subplotspec"):
-                subplotspec = locator.get_subplotspec()
-            elif hasattr(ax, "get_subplotspec"):
-                subplotspec = ax.get_subplotspec()
-            else:
-                continue
+        kwargs = get_tight_layout_figure(fig, fig.axes, subplotspec_list,
+                                         renderer,
+                                         pad=pad, h_pad=h_pad, w_pad=w_pad,
+                                         rect=rect,
+                                         )
 
-            if subplotspec.get_gridspec() != self: continue
-
-            subplots = subplot_dict.get(subplotspec, [])
-
-            if not subplots:
-                _, _, num1, num2 = subplotspec.get_geometry()
-                num1num2_list.append((num1, num2))
-                subplot_list.append(subplots)
-
-            subplots.append(ax)
-
-
-        kwargs = auto_adjust_subplotpars(fig, renderer,
-                                          nrows_ncols=self.get_geometry(),
-                                          num1num2_list=num1num2_list,
-                                          subplot_list=subplot_list,
-                                          pad=pad, h_pad=h_pad, w_pad=w_pad)
-
-        if rect is not None:
-            # if rect is given, the whole subplots area (including
-            # labels) will fit into the rect instead of the
-            # figure. Note that the rect argument of
-            # *auto_adjust_subplotpars* specify the area that will be
-            # covered by the total area of axes.bbox. Thus we call
-            # auto_adjust_subplotpars twice, where the second run
-            # with adjusted rect parameters.
-
-            left, bottom, right, top = rect
-            if left is not None: left += kwargs["left"]
-            if bottom is not None: bottom += kwargs["bottom"]
-            if right is not None: right -= (1 - kwargs["right"])
-            if top is not None: top -= (1 - kwargs["top"])
-
-            #if h_pad is None: h_pad = pad
-            #if w_pad is None: w_pad = pad
-
-            kwargs = auto_adjust_subplotpars(fig, renderer,
-                                             nrows_ncols=self.get_geometry(),
-                                             num1num2_list=num1num2_list,
-                                             subplot_list=subplot_list,
-                                             pad=pad, h_pad=h_pad, w_pad=w_pad,
-                                             rect=(left, bottom, right, top))
-
-            
         self.update(**kwargs)
 
 
@@ -436,7 +406,7 @@ class SubplotSpec(object):
 
     def get_geometry(self):
         """
-        get the subplot geometry, eg 2,2,3. Unlike SuplorParams,
+        get the subplot geometry, e.g., 2,2,3. Unlike SuplorParams,
         index is 0-based
         """
         rows, cols = self.get_gridspec().get_geometry()
@@ -491,3 +461,19 @@ class SubplotSpec(object):
             return gridspec.get_topmost_subplotspec()
         else:
             return self
+
+    def __eq__(self, other):
+        # check to make sure other has the attributes
+        # we need to do the comparison
+        if not (hasattr(other, '_gridspec') and
+                hasattr(other, 'num1') and
+                hasattr(other, 'num2')):
+            return False
+        return all((self._gridspec == other._gridspec,
+                    self.num1 == other.num1,
+                    self.num2 == other.num2))
+
+    def __hash__(self):
+        return (hash(self._gridspec) ^
+                hash(self.num1) ^
+                hash(self.num2))

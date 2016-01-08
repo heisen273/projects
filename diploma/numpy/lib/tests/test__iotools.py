@@ -1,24 +1,24 @@
-import sys
-if sys.version_info[0] >= 3:
-    from io import BytesIO
-    def StringIO(s=""):
-        return BytesIO(asbytes(s))
-else:
-    from StringIO import StringIO
+from __future__ import division, absolute_import, print_function
 
-from datetime import date
+import sys
 import time
+from datetime import date
 
 import numpy as np
-from numpy.lib._iotools import LineSplitter, NameValidator, StringConverter, \
-                               has_nested_fields, easy_dtype, flatten_dtype
-from numpy.testing import *
-
 from numpy.compat import asbytes, asbytes_nested
+from numpy.testing import (
+    run_module_suite, TestCase, assert_, assert_equal, assert_allclose,
+    assert_raises
+    )
+from numpy.lib._iotools import (
+    LineSplitter, NameValidator, StringConverter,
+    has_nested_fields, easy_dtype, flatten_dtype
+    )
+
 
 class TestLineSplitter(TestCase):
     "Tests the LineSplitter class."
-    #
+
     def test_no_delimiter(self):
         "Test LineSplitter w/o delimiter"
         strg = asbytes(" 1 2 3 4  5 # test")
@@ -77,11 +77,11 @@ class TestLineSplitter(TestCase):
         test = LineSplitter((6, 6, 9))(strg)
         assert_equal(test, asbytes_nested(['1', '3  4', '5  6']))
 
+# -----------------------------------------------------------------------------
 
-#-------------------------------------------------------------------------------
 
 class TestNameValidator(TestCase):
-    #
+
     def test_case_sensitivity(self):
         "Test case sensitivity"
         names = ['A', 'a', 'b', 'c']
@@ -93,14 +93,17 @@ class TestNameValidator(TestCase):
         assert_equal(test, ['A', 'A_1', 'B', 'C'])
         test = NameValidator(case_sensitive='lower').validate(names)
         assert_equal(test, ['a', 'a_1', 'b', 'c'])
-    #
+
+        # check exceptions
+        assert_raises(ValueError, NameValidator, case_sensitive='foobar')
+
     def test_excludelist(self):
         "Test excludelist"
         names = ['dates', 'data', 'Other Data', 'mask']
         validator = NameValidator(excludelist=['dates', 'data', 'mask'])
         test = validator.validate(names)
         assert_equal(test, ['dates_', 'data_', 'Other_Data', 'mask_'])
-    #
+
     def test_missing_names(self):
         "Test validate missing names"
         namelist = ('a', 'b', 'c')
@@ -112,7 +115,7 @@ class TestNameValidator(TestCase):
         assert_equal(validator(namelist), ['a', 'b', 'f0'])
         namelist = ('', 'f0', '')
         assert_equal(validator(namelist), ['f1', 'f0', 'f2'])
-    #
+
     def test_validate_nb_names(self):
         "Test validate nb names"
         namelist = ('a', 'b', 'c')
@@ -120,18 +123,16 @@ class TestNameValidator(TestCase):
         assert_equal(validator(namelist, nbfields=1), ('a',))
         assert_equal(validator(namelist, nbfields=5, defaultfmt="g%i"),
                      ['a', 'b', 'c', 'g0', 'g1'])
-    #
+
     def test_validate_wo_names(self):
         "Test validate no names"
         namelist = None
         validator = NameValidator()
-        assert(validator(namelist) is None)
+        assert_(validator(namelist) is None)
         assert_equal(validator(namelist, nbfields=3), ['f0', 'f1', 'f2'])
 
+# -----------------------------------------------------------------------------
 
-
-
-#-------------------------------------------------------------------------------
 
 def _bytes_to_date(s):
     if sys.version_info[0] >= 3:
@@ -139,28 +140,47 @@ def _bytes_to_date(s):
     else:
         return date(*time.strptime(s, "%Y-%m-%d")[:3])
 
+
 class TestStringConverter(TestCase):
     "Test StringConverter"
-    #
+
     def test_creation(self):
         "Test creation of a StringConverter"
         converter = StringConverter(int, -99999)
         assert_equal(converter._status, 1)
         assert_equal(converter.default, -99999)
-    #
+
     def test_upgrade(self):
         "Tests the upgrade method."
+
         converter = StringConverter()
         assert_equal(converter._status, 0)
-        converter.upgrade(asbytes('0'))
+
+        # test int
+        assert_equal(converter.upgrade(asbytes('0')), 0)
         assert_equal(converter._status, 1)
-        converter.upgrade(asbytes('0.'))
-        assert_equal(converter._status, 2)
-        converter.upgrade(asbytes('0j'))
-        assert_equal(converter._status, 3)
-        converter.upgrade(asbytes('a'))
+
+        # On systems where integer defaults to 32-bit, the statuses will be
+        # offset by one, so we check for this here.
+        import numpy.core.numeric as nx
+        status_offset = int(nx.dtype(nx.integer).itemsize < nx.dtype(nx.int64).itemsize)
+
+        # test int > 2**32
+        assert_equal(converter.upgrade(asbytes('17179869184')), 17179869184)
+        assert_equal(converter._status, 1 + status_offset)
+
+        # test float
+        assert_allclose(converter.upgrade(asbytes('0.')), 0.0)
+        assert_equal(converter._status, 2 + status_offset)
+
+        # test complex
+        assert_equal(converter.upgrade(asbytes('0j')), complex('0j'))
+        assert_equal(converter._status, 3 + status_offset)
+
+        # test str
+        assert_equal(converter.upgrade(asbytes('a')), asbytes('a'))
         assert_equal(converter._status, len(converter._mapper) - 1)
-    #
+
     def test_missing(self):
         "Tests the use of missing values."
         converter = StringConverter(missing_values=(asbytes('missing'),
@@ -174,49 +194,51 @@ class TestStringConverter(TestCase):
             converter('miss')
         except ValueError:
             pass
-    #
+
     def test_upgrademapper(self):
         "Tests updatemapper"
         dateparser = _bytes_to_date
         StringConverter.upgrade_mapper(dateparser, date(2000, 1, 1))
         convert = StringConverter(dateparser, date(2000, 1, 1))
         test = convert(asbytes('2001-01-01'))
-        assert_equal(test, date(2001, 01, 01))
+        assert_equal(test, date(2001, 1, 1))
         test = convert(asbytes('2009-01-01'))
-        assert_equal(test, date(2009, 01, 01))
+        assert_equal(test, date(2009, 1, 1))
         test = convert(asbytes(''))
-        assert_equal(test, date(2000, 01, 01))
-    #
+        assert_equal(test, date(2000, 1, 1))
+
     def test_string_to_object(self):
         "Make sure that string-to-object functions are properly recognized"
         conv = StringConverter(_bytes_to_date)
         assert_equal(conv._mapper[-2][0](0), 0j)
-        assert(hasattr(conv, 'default'))
-    #
+        assert_(hasattr(conv, 'default'))
+
     def test_keep_default(self):
         "Make sure we don't lose an explicit default"
         converter = StringConverter(None, missing_values=asbytes(''),
-                                    default= -999)
+                                    default=-999)
         converter.upgrade(asbytes('3.14159265'))
         assert_equal(converter.default, -999)
         assert_equal(converter.type, np.dtype(float))
         #
-        converter = StringConverter(None, missing_values=asbytes(''), default=0)
+        converter = StringConverter(
+            None, missing_values=asbytes(''), default=0)
         converter.upgrade(asbytes('3.14159265'))
         assert_equal(converter.default, 0)
         assert_equal(converter.type, np.dtype(float))
-    #
+
     def test_keep_default_zero(self):
         "Check that we don't lose a default of 0"
         converter = StringConverter(int, default=0,
                                     missing_values=asbytes("N/A"))
         assert_equal(converter.default, 0)
-    #
+
     def test_keep_missing_values(self):
         "Check that we're not losing missing values"
         converter = StringConverter(int, default=0,
                                     missing_values=asbytes("N/A"))
-        assert_equal(converter.missing_values, set(asbytes_nested(['', 'N/A'])))
+        assert_equal(
+            converter.missing_values, set(asbytes_nested(['', 'N/A'])))
 
     def test_int64_dtype(self):
         "Check that int64 integer types can be specified"
@@ -232,10 +254,9 @@ class TestStringConverter(TestCase):
         val = asbytes("9223372043271415339")
         assert_(converter(val) == 9223372043271415339)
 
-#-------------------------------------------------------------------------------
 
 class TestMiscFunctions(TestCase):
-    #
+
     def test_has_nested_dtype(self):
         "Test has_nested_dtype"
         ndtype = np.dtype(np.float)
@@ -288,7 +309,7 @@ class TestMiscFunctions(TestCase):
         ndtype = (int, float, float)
         assert_equal(easy_dtype(ndtype),
                      np.dtype([('f0', int), ('f1', float), ('f2', float)]))
-                # As list of types w names
+        # As list of types w names
         ndtype = (int, float, float)
         assert_equal(easy_dtype(ndtype, names="a, b, c"),
                      np.dtype([('a', int), ('b', float), ('c', float)]))
@@ -298,9 +319,9 @@ class TestMiscFunctions(TestCase):
                      np.dtype([(_, float) for _ in ('a', 'b', 'c')]))
         # As simple dtype w/o names (but multiple fields)
         ndtype = np.dtype(float)
-        assert_equal(easy_dtype(ndtype, names=['', '', ''], defaultfmt="f%02i"),
-                     np.dtype([(_, float) for _ in ('f00', 'f01', 'f02')]))
-
+        assert_equal(
+            easy_dtype(ndtype, names=['', '', ''], defaultfmt="f%02i"),
+            np.dtype([(_, float) for _ in ('f00', 'f01', 'f02')]))
 
     def test_flatten_dtype(self):
         "Testing flatten_dtype"

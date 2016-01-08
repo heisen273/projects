@@ -1,44 +1,36 @@
-from __future__ import division
-"""
+from __future__ import (absolute_import, division, print_function,
+                        unicode_literals)
 
- backend_wxagg.py
-
- A wxPython backend for Agg.  This uses the GUI widgets written by
- Jeremy O'Donoghue (jeremy@o-donoghue.com) and the Agg backend by John
- Hunter (jdhunter@ace.bsd.uchicago.edu)
-
- Copyright (C) 2003-5 Jeremy O'Donoghue, John Hunter, Illinois Institute of
- Technology
-
-
- License: This work is licensed under the matplotlib license( PSF
- compatible). A copy should be included with this source code.
-
-"""
+from matplotlib.externals import six
 
 import matplotlib
 from matplotlib.figure import Figure
 
-from backend_agg import FigureCanvasAgg
-import backend_wx    # already uses wxversion.ensureMinimal('2.8')
-from backend_wx import FigureManager, FigureManagerWx, FigureCanvasWx, \
-    FigureFrameWx, DEBUG_MSG, NavigationToolbar2Wx, error_msg_wx, \
-    draw_if_interactive, show, Toolbar, backend_version
+from .backend_agg import FigureCanvasAgg
+
+from . import wx_compat as wxc
+from . import backend_wx
+from .backend_wx import (FigureManagerWx, FigureCanvasWx,
+    FigureFrameWx, DEBUG_MSG, NavigationToolbar2Wx, Toolbar)
+
 import wx
+
+
+show = backend_wx.Show()
+
 
 class FigureFrameWxAgg(FigureFrameWx):
     def get_canvas(self, fig):
         return FigureCanvasWxAgg(self, -1, fig)
 
     def _get_toolbar(self, statbar):
-        if matplotlib.rcParams['toolbar']=='classic':
-            toolbar = NavigationToolbarWx(self.canvas, True)
-        elif matplotlib.rcParams['toolbar']=='toolbar2':
+        if matplotlib.rcParams['toolbar'] == 'toolbar2':
             toolbar = NavigationToolbar2WxAgg(self.canvas)
             toolbar.set_status_bar(statbar)
         else:
             toolbar = None
         return toolbar
+
 
 class FigureCanvasWxAgg(FigureCanvasAgg, FigureCanvasWx):
     """
@@ -60,7 +52,7 @@ class FigureCanvasWxAgg(FigureCanvasAgg, FigureCanvasWx):
 
         self.bitmap = _convert_agg_to_wx_bitmap(self.get_renderer(), None)
         self._isDrawn = True
-        self.gui_repaint(drawDC=drawDC)
+        self.gui_repaint(drawDC=drawDC, origin='WXAgg')
 
     def blit(self, bbox=None):
         """
@@ -85,9 +77,7 @@ class FigureCanvasWxAgg(FigureCanvasAgg, FigureCanvasWx):
         destDC = wx.MemoryDC()
         destDC.SelectObject(self.bitmap)
 
-        destDC.BeginDrawing()
         destDC.Blit(x, y, int(w), int(h), srcDC, x, y)
-        destDC.EndDrawing()
 
         destDC.SelectObject(wx.NullBitmap)
         srcDC.SelectObject(wx.NullBitmap)
@@ -105,6 +95,7 @@ class FigureCanvasWxAgg(FigureCanvasAgg, FigureCanvasWx):
         if self._isDrawn:
             self.draw()
 
+
 class NavigationToolbar2WxAgg(NavigationToolbar2Wx):
     def get_canvas(self, frame, fig):
         return FigureCanvasWxAgg(frame, -1, fig)
@@ -121,12 +112,20 @@ def new_figure_manager(num, *args, **kwargs):
 
     FigureClass = kwargs.pop('FigureClass', Figure)
     fig = FigureClass(*args, **kwargs)
-    frame = FigureFrameWxAgg(num, fig)
+
+    return new_figure_manager_given_figure(num, fig)
+
+
+def new_figure_manager_given_figure(num, figure):
+    """
+    Create a new figure manager instance for the given figure.
+    """
+    frame = FigureFrameWxAgg(num, figure)
     figmgr = frame.get_figure_manager()
     if matplotlib.is_interactive():
         figmgr.frame.Show()
+        figure.canvas.draw_idle()
     return figmgr
-
 
 
 #
@@ -142,7 +141,7 @@ def _convert_agg_to_wx_image(agg, bbox):
     """
     if bbox is None:
         # agg => rgb -> image
-        image = wx.EmptyImage(int(agg.width), int(agg.height))
+        image = wxc.EmptyImage(int(agg.width), int(agg.height))
         image.SetData(agg.tostring_rgb())
         return image
     else:
@@ -159,8 +158,8 @@ def _convert_agg_to_wx_bitmap(agg, bbox):
     """
     if bbox is None:
         # agg => rgba buffer -> bitmap
-        return wx.BitmapFromBufferRGBA(int(agg.width), int(agg.height),
-            agg.buffer_rgba(0, 0))
+        return wxc.BitmapFromBuffer(int(agg.width), int(agg.height),
+                                    agg.buffer_rgba())
     else:
         # agg => rgba buffer -> bitmap => clipped bitmap
         return _WX28_clipped_agg_as_bitmap(agg, bbox)
@@ -176,23 +175,23 @@ def _WX28_clipped_agg_as_bitmap(agg, bbox):
     r = l + width
     t = b + height
 
-    srcBmp = wx.BitmapFromBufferRGBA(int(agg.width), int(agg.height),
-        agg.buffer_rgba(0, 0))
+    srcBmp = wxc.BitmapFromBuffer(int(agg.width), int(agg.height),
+                                  agg.buffer_rgba())
     srcDC = wx.MemoryDC()
     srcDC.SelectObject(srcBmp)
 
-    destBmp = wx.EmptyBitmap(int(width), int(height))
+    destBmp = wxc.EmptyBitmap(int(width), int(height))
     destDC = wx.MemoryDC()
     destDC.SelectObject(destBmp)
 
-    destDC.BeginDrawing()
     x = int(l)
     y = int(int(agg.height) - t)
     destDC.Blit(0, 0, int(width), int(height), srcDC, x, y)
-    destDC.EndDrawing()
 
     srcDC.SelectObject(wx.NullBitmap)
     destDC.SelectObject(wx.NullBitmap)
 
     return destBmp
 
+FigureCanvas = FigureCanvasWxAgg
+FigureManager = FigureManagerWx

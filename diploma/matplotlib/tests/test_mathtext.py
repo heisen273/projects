@@ -1,10 +1,18 @@
+from __future__ import (absolute_import, division, print_function,
+                        unicode_literals)
+
+from matplotlib.externals import six
+
+import io
+
 import numpy as np
 import matplotlib
-from matplotlib.testing.decorators import image_comparison, knownfailureif
+from matplotlib.testing.decorators import image_comparison, knownfailureif, cleanup
 import matplotlib.pyplot as plt
+from matplotlib import mathtext
 
 math_tests = [
-    r'$a+b+\dots+\dot{s}+\ldots$',
+    r'$a+b+\dot s+\dot{s}+\ldots$',
     r'$x \doteq y$',
     r'\$100.00 $\alpha \_$',
     r'$\frac{\$100.00}{y}$',
@@ -44,9 +52,8 @@ math_tests = [
     r"$W^{3\beta}_{\delta_1 \rho_1 \sigma_2} = U^{3\beta}_{\delta_1 \rho_1} + \frac{1}{8 \pi 2} \int^{\alpha_2}_{\alpha_2} d \alpha^\prime_2 \left[\frac{ U^{2\beta}_{\delta_1 \rho_1} - \alpha^\prime_2U^{1\beta}_{\rho_1 \sigma_2} }{U^{0\beta}_{\rho_1 \sigma_2}}\right]$",
     r'$\mathcal{H} = \int d \tau \left(\epsilon E^2 + \mu H^2\right)$',
     r'$\widehat{abc}\widetilde{def}$',
-    r'$\Gamma \Delta \Theta \Lambda \Xi \Pi \Sigma \Upsilon \Phi \Psi \Omega$',
-    r'$\alpha \beta \gamma \delta \epsilon \zeta \eta \theta \iota \lambda \mu \nu \xi \pi \kappa \rho \sigma \tau \upsilon \phi \chi \psi$',
-    # r'$\operatorname{cos} x$',
+    '$\\Gamma \\Delta \\Theta \\Lambda \\Xi \\Pi \\Sigma \\Upsilon \\Phi \\Psi \\Omega$',
+    '$\\alpha \\beta \\gamma \\delta \\epsilon \\zeta \\eta \\theta \\iota \\lambda \\mu \\nu \\xi \\pi \\kappa \\rho \\sigma \\tau \\upsilon \\phi \\chi \\psi$',
 
     # The examples prefixed by 'mmltt' are from the MathML torture test here:
         # http://www.mozilla.org/projects/mathml/demo/texvsmml.xhtml
@@ -59,7 +66,6 @@ math_tests = [
     r'${a}_{0}+\frac{1}{{a}_{1}+\frac{1}{{a}_{2}+\frac{1}{{a}_{3}+\frac{1}{{a}_{4}}}}}$',
     r'$\binom{n}{k/2}$',
     r'$\binom{p}{2}{x}^{2}{y}^{p-2}-\frac{1}{1-x}\frac{1}{1-{x}^{2}}$',
-    # 'mmltt10'    : r'$\sum _{\genfrac{}{}{0}{}{0\leq i\leq m}{0<j<n}}P\left(i,j\right)$',
     r'${x}^{2y}$',
     r'$\sum _{i=1}^{p}\sum _{j=1}^{q}\sum _{k=1}^{r}{a}_{ij}{b}_{jk}{c}_{ki}$',
     r'$\sqrt{1+\sqrt{1+\sqrt{1+\sqrt{1+\sqrt{1+\sqrt{1+\sqrt{1+x}}}}}}}$',
@@ -85,16 +91,29 @@ math_tests = [
     r"$\left( \xi \left( 1 - \xi \right) \right)$", # Bug 2969451
     r"$\left(2 \, a=b\right)$", # Sage bug #8125
     r"$? ! &$", # github issue #466
+    r'$\operatorname{cos} x$', # github issue #553
+    r'$\sum _{\genfrac{}{}{0}{}{0\leq i\leq m}{0<j<n}}P\left(i,j\right)$',
+    r"$\left\Vert a \right\Vert \left\vert b \right\vert \left| a \right| \left\| b\right\| \Vert a \Vert \vert b \vert$",
+    r'$\mathring{A}  \stackrel{\circ}{A}  \AA$',
+    r'$M \, M \thinspace M \/ M \> M \: M \; M \ M \enspace M \quad M \qquad M \! M$',
+    r'$\Cup$ $\Cap$ $\leftharpoonup$ $\barwedge$ $\rightharpoonup$',
+    r'$\dotplus$ $\doteq$ $\doteqdot$ $\ddots$',
+    r'$xyz^kx_kx^py^{p-2} d_i^jb_jc_kd x^j_i E^0 E^0_u$', # github issue #4873
+    r'${xyz}^k{x}_{k}{x}^{p}{y}^{p-2} {d}_{i}^{j}{b}_{j}{c}_{k}{d} {x}^{j}_{i}{E}^{0}{E}^0_u$',
+    r'${\int}_x^x x\oint_x^x x\int_{X}^{X}x\int_x x \int^x x \int_{x} x\int^{x}{\int}_{x} x{\int}^{x}_{x}x$',
+    r'testing$^{123}$',
+    ' '.join('$\\' + p + '$' for p in sorted(mathtext.Parser._snowflake)),
+    r'$6-2$; $-2$; $ -2$; ${-2}$; ${  -2}$; $20^{+3}_{-2}$',
 ]
 
 digits = "0123456789"
 uppercase = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 lowercase = "abcdefghijklmnopqrstuvwxyz"
-uppergreek = (r"\Gamma \Delta \Theta \Lambda \Xi \Pi \Sigma \Upsilon \Phi \Psi "
-              r"\Omega")
-lowergreek = (r"\alpha \beta \gamma \delta \epsilon \zeta \eta \theta \iota "
-              r"\lambda \mu \nu \xi \pi \kappa \rho \sigma \tau \upsilon "
-              r"\phi \chi \psi")
+uppergreek = ("\\Gamma \\Delta \\Theta \\Lambda \\Xi \\Pi \\Sigma \\Upsilon \\Phi \\Psi "
+              "\\Omega")
+lowergreek = ("\\alpha \\beta \\gamma \\delta \\epsilon \\zeta \\eta \\theta \\iota "
+              "\\lambda \\mu \\nu \\xi \\pi \\kappa \\rho \\sigma \\tau \\upsilon "
+              "\\phi \\chi \\psi")
 all = [digits, uppercase, lowercase, uppergreek, lowergreek]
 
 font_test_specs = [
@@ -138,13 +157,13 @@ for fonts, chars in font_test_specs:
 def make_set(basename, fontset, tests, extensions=None):
     def make_test(filename, test):
         @image_comparison(baseline_images=[filename], extensions=extensions,
-                          freetype_version=('2.4.5', '2.4.9'))
+                          tol=32)
         def single_test():
             matplotlib.rcParams['mathtext.fontset'] = fontset
             fig = plt.figure(figsize=(5.25, 0.75))
             fig.text(0.5, 0.5, test, horizontalalignment='center', verticalalignment='center')
         func = single_test
-        func.__name__ = filename + "_test"
+        func.__name__ = str("test_" + filename)
         return func
 
     # We inject test functions into the global namespace, rather than
@@ -170,3 +189,57 @@ def test_fontinfo():
     font = ft2font.FT2Font(fontpath)
     table = font.get_sfnt_table("head")
     assert table['version'] == (1, 0)
+
+def test_mathtext_exceptions():
+    errors = [
+        (r'$\hspace{}$', r'Expected \hspace{n}'),
+        (r'$\hspace{foo}$', r'Expected \hspace{n}'),
+        (r'$\frac$', r'Expected \frac{num}{den}'),
+        (r'$\frac{}{}$', r'Expected \frac{num}{den}'),
+        (r'$\stackrel$', r'Expected \stackrel{num}{den}'),
+        (r'$\stackrel{}{}$', r'Expected \stackrel{num}{den}'),
+        (r'$\binom$', r'Expected \binom{num}{den}'),
+        (r'$\binom{}{}$', r'Expected \binom{num}{den}'),
+        (r'$\genfrac$', r'Expected \genfrac{ldelim}{rdelim}{rulesize}{style}{num}{den}'),
+        (r'$\genfrac{}{}{}{}{}{}$', r'Expected \genfrac{ldelim}{rdelim}{rulesize}{style}{num}{den}'),
+        (r'$\sqrt$', r'Expected \sqrt{value}'),
+        (r'$\sqrt f$', r'Expected \sqrt{value}'),
+        (r'$\overline$', r'Expected \overline{value}'),
+        (r'$\overline{}$', r'Expected \overline{value}'),
+        (r'$\leftF$', r'Expected a delimiter'),
+        (r'$\rightF$', r'Unknown symbol: \rightF'),
+        (r'$\left(\right$', r'Expected a delimiter'),
+        (r'$\left($', r'Expected "\right"')
+        ]
+
+    parser = mathtext.MathTextParser('agg')
+
+    for math, msg in errors:
+        try:
+            parser.parse(math)
+        except ValueError as e:
+            exc = str(e).split('\n')
+            assert exc[3].startswith(msg)
+        else:
+            assert False, "Expected '%s', but didn't get it" % msg
+
+@cleanup
+def test_single_minus_sign():
+    plt.figure(figsize=(0.3, 0.3))
+    plt.text(0.5, 0.5, '$-$')
+    for spine in plt.gca().spines.values():
+        spine.set_visible(False)
+    plt.gca().set_xticks([])
+    plt.gca().set_yticks([])
+
+    buff = io.BytesIO()
+    plt.savefig(buff, format="rgba", dpi=1000)
+    array = np.fromstring(buff.getvalue(), dtype=np.uint8)
+
+    # If this fails, it would be all white
+    assert not np.all(array == 0xff)
+
+
+if __name__ == '__main__':
+    import nose
+    nose.runmodule(argv=['-s', '--with-doctest'], exit=False)

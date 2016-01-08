@@ -9,7 +9,7 @@ extern "C" {
 #ifdef FORTRANOBJECT_C
 #define NO_IMPORT_ARRAY
 #endif
-#define PY_ARRAY_UNIQUE_SYMBOL PyArray_API
+#define PY_ARRAY_UNIQUE_SYMBOL _npy_f2py_ARRAY_API
 #include "numpy/arrayobject.h"
 
 /*
@@ -20,6 +20,7 @@ extern "C" {
 #define PyString_GET_SIZE PyBytes_GET_SIZE
 #define PyString_AS_STRING PyBytes_AS_STRING
 #define PyString_FromString PyBytes_FromString
+#define PyUString_FromStringAndSize PyUnicode_FromStringAndSize
 #define PyString_ConcatAndDel PyBytes_ConcatAndDel
 #define PyString_AsString PyBytes_AsString
 
@@ -29,29 +30,12 @@ extern "C" {
 #define PyInt_AsLong PyLong_AsLong
 
 #define PyNumber_Int PyNumber_Long
-#endif
 
-#if (PY_VERSION_HEX < 0x02060000)
-#define Py_TYPE(o)    (((PyObject*)(o))->ob_type)
-#define Py_REFCNT(o)  (((PyObject*)(o))->ob_refcnt)
-#define Py_SIZE(o)    (((PyVarObject*)(o))->ob_size)
-#endif
-
-  /*
-#ifdef F2PY_REPORT_ATEXIT_DISABLE
-#undef F2PY_REPORT_ATEXIT
 #else
 
-#ifndef __FreeBSD__
-#ifndef __WIN32__
-#ifndef __APPLE__
-#define F2PY_REPORT_ATEXIT
-#endif
-#endif
+#define PyUString_FromStringAndSize PyString_FromStringAndSize
 #endif
 
-#endif
-  */
 
 #ifdef F2PY_REPORT_ATEXIT
 #include <sys/timeb.h>
@@ -135,7 +119,7 @@ int F2PyCapsule_Check(PyObject *ptr);
 
 #endif
 
-#define ISCONTIGUOUS(m) ((m)->flags & NPY_CONTIGUOUS)
+#define ISCONTIGUOUS(m) (PyArray_FLAGS(m) & NPY_ARRAY_C_CONTIGUOUS)
 #define F2PY_INTENT_IN 1
 #define F2PY_INTENT_INOUT 2
 #define F2PY_INTENT_OUT 4

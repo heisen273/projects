@@ -90,22 +90,22 @@ static PyObject *f2py_rout_wrap_attrs(PyObject *capi_self,
 			&PyArray_Type,&arr_capi))
     return NULL;
   arr = (PyArrayObject *)arr_capi;
-  sprintf(s,"%p",arr->data);
-  dimensions = PyTuple_New(arr->nd);
-  strides = PyTuple_New(arr->nd);
-  for (i=0;i<arr->nd;++i) {
-    PyTuple_SetItem(dimensions,i,PyInt_FromLong(arr->dimensions[i]));
-    PyTuple_SetItem(strides,i,PyInt_FromLong(arr->strides[i]));
+  sprintf(s,"%p",PyArray_DATA(arr));
+  dimensions = PyTuple_New(PyArray_NDIM(arr));
+  strides = PyTuple_New(PyArray_NDIM(arr));
+  for (i=0;i<PyArray_NDIM(arr);++i) {
+    PyTuple_SetItem(dimensions,i,PyInt_FromLong(PyArray_DIM(arr,i)));
+    PyTuple_SetItem(strides,i,PyInt_FromLong(PyArray_STRIDE(arr,i)));
   }
-  return Py_BuildValue("siOOO(cciii)ii",s,arr->nd,
+  return Py_BuildValue("siOOO(cciii)ii",s,PyArray_NDIM(arr),
 		       dimensions,strides,
-		       (arr->base==NULL?Py_None:arr->base),
-		       arr->descr->kind,
-		       arr->descr->type,
-		       arr->descr->type_num,
-		       arr->descr->elsize,
-		       arr->descr->alignment,
-		       arr->flags,
+		       (PyArray_BASE(arr)==NULL?Py_None:PyArray_BASE(arr)),
+		       PyArray_DESCR(arr)->kind,
+		       PyArray_DESCR(arr)->type,
+		       PyArray_TYPE(arr),
+		       PyArray_ITEMSIZE(arr),
+		       PyArray_DESCR(arr)->alignment,
+		       PyArray_FLAGS(arr),
 		       PyArray_ITEMSIZE(arr));
 }
 
@@ -132,7 +132,7 @@ static struct PyModuleDef moduledef = {
 
 #if PY_VERSION_HEX >= 0x03000000
 #define RETVAL m
-PyObject *PyInit_test_array_from_pyobj_ext(void) {
+PyMODINIT_FUNC PyInit_test_array_from_pyobj_ext(void) {
 #else
 #define RETVAL
 PyMODINIT_FUNC inittest_array_from_pyobj_ext(void) {
@@ -163,51 +163,51 @@ PyMODINIT_FUNC inittest_array_from_pyobj_ext(void) {
   PyDict_SetItemString(d, "F2PY_INTENT_C", PyInt_FromLong(F2PY_INTENT_C));
   PyDict_SetItemString(d, "F2PY_OPTIONAL", PyInt_FromLong(F2PY_OPTIONAL));
   PyDict_SetItemString(d, "F2PY_INTENT_INPLACE", PyInt_FromLong(F2PY_INTENT_INPLACE));
-  PyDict_SetItemString(d, "PyArray_BOOL", PyInt_FromLong(PyArray_BOOL));
-  PyDict_SetItemString(d, "PyArray_BYTE", PyInt_FromLong(PyArray_BYTE));
-  PyDict_SetItemString(d, "PyArray_UBYTE", PyInt_FromLong(PyArray_UBYTE));
-  PyDict_SetItemString(d, "PyArray_SHORT", PyInt_FromLong(PyArray_SHORT));
-  PyDict_SetItemString(d, "PyArray_USHORT", PyInt_FromLong(PyArray_USHORT));
-  PyDict_SetItemString(d, "PyArray_INT", PyInt_FromLong(PyArray_INT));
-  PyDict_SetItemString(d, "PyArray_UINT", PyInt_FromLong(PyArray_UINT));
-  PyDict_SetItemString(d, "PyArray_INTP", PyInt_FromLong(PyArray_INTP));
-  PyDict_SetItemString(d, "PyArray_UINTP", PyInt_FromLong(PyArray_UINTP));
-  PyDict_SetItemString(d, "PyArray_LONG", PyInt_FromLong(PyArray_LONG));
-  PyDict_SetItemString(d, "PyArray_ULONG", PyInt_FromLong(PyArray_ULONG));
-  PyDict_SetItemString(d, "PyArray_LONGLONG", PyInt_FromLong(PyArray_LONGLONG));
-  PyDict_SetItemString(d, "PyArray_ULONGLONG", PyInt_FromLong(PyArray_ULONGLONG));
-  PyDict_SetItemString(d, "PyArray_FLOAT", PyInt_FromLong(PyArray_FLOAT));
-  PyDict_SetItemString(d, "PyArray_DOUBLE", PyInt_FromLong(PyArray_DOUBLE));
-  PyDict_SetItemString(d, "PyArray_LONGDOUBLE", PyInt_FromLong(PyArray_LONGDOUBLE));
-  PyDict_SetItemString(d, "PyArray_CFLOAT", PyInt_FromLong(PyArray_CFLOAT));
-  PyDict_SetItemString(d, "PyArray_CDOUBLE", PyInt_FromLong(PyArray_CDOUBLE));
-  PyDict_SetItemString(d, "PyArray_CLONGDOUBLE", PyInt_FromLong(PyArray_CLONGDOUBLE));
-  PyDict_SetItemString(d, "PyArray_OBJECT", PyInt_FromLong(PyArray_OBJECT));
-  PyDict_SetItemString(d, "PyArray_STRING", PyInt_FromLong(PyArray_STRING));
-  PyDict_SetItemString(d, "PyArray_UNICODE", PyInt_FromLong(PyArray_UNICODE));
-  PyDict_SetItemString(d, "PyArray_VOID", PyInt_FromLong(PyArray_VOID));
-  PyDict_SetItemString(d, "PyArray_NTYPES", PyInt_FromLong(PyArray_NTYPES));
-  PyDict_SetItemString(d, "PyArray_NOTYPE", PyInt_FromLong(PyArray_NOTYPE));
-  PyDict_SetItemString(d, "PyArray_UDERDEF", PyInt_FromLong(PyArray_USERDEF));
+  PyDict_SetItemString(d, "NPY_BOOL", PyInt_FromLong(NPY_BOOL));
+  PyDict_SetItemString(d, "NPY_BYTE", PyInt_FromLong(NPY_BYTE));
+  PyDict_SetItemString(d, "NPY_UBYTE", PyInt_FromLong(NPY_UBYTE));
+  PyDict_SetItemString(d, "NPY_SHORT", PyInt_FromLong(NPY_SHORT));
+  PyDict_SetItemString(d, "NPY_USHORT", PyInt_FromLong(NPY_USHORT));
+  PyDict_SetItemString(d, "NPY_INT", PyInt_FromLong(NPY_INT));
+  PyDict_SetItemString(d, "NPY_UINT", PyInt_FromLong(NPY_UINT));
+  PyDict_SetItemString(d, "NPY_INTP", PyInt_FromLong(NPY_INTP));
+  PyDict_SetItemString(d, "NPY_UINTP", PyInt_FromLong(NPY_UINTP));
+  PyDict_SetItemString(d, "NPY_LONG", PyInt_FromLong(NPY_LONG));
+  PyDict_SetItemString(d, "NPY_ULONG", PyInt_FromLong(NPY_ULONG));
+  PyDict_SetItemString(d, "NPY_LONGLONG", PyInt_FromLong(NPY_LONGLONG));
+  PyDict_SetItemString(d, "NPY_ULONGLONG", PyInt_FromLong(NPY_ULONGLONG));
+  PyDict_SetItemString(d, "NPY_FLOAT", PyInt_FromLong(NPY_FLOAT));
+  PyDict_SetItemString(d, "NPY_DOUBLE", PyInt_FromLong(NPY_DOUBLE));
+  PyDict_SetItemString(d, "NPY_LONGDOUBLE", PyInt_FromLong(NPY_LONGDOUBLE));
+  PyDict_SetItemString(d, "NPY_CFLOAT", PyInt_FromLong(NPY_CFLOAT));
+  PyDict_SetItemString(d, "NPY_CDOUBLE", PyInt_FromLong(NPY_CDOUBLE));
+  PyDict_SetItemString(d, "NPY_CLONGDOUBLE", PyInt_FromLong(NPY_CLONGDOUBLE));
+  PyDict_SetItemString(d, "NPY_OBJECT", PyInt_FromLong(NPY_OBJECT));
+  PyDict_SetItemString(d, "NPY_STRING", PyInt_FromLong(NPY_STRING));
+  PyDict_SetItemString(d, "NPY_UNICODE", PyInt_FromLong(NPY_UNICODE));
+  PyDict_SetItemString(d, "NPY_VOID", PyInt_FromLong(NPY_VOID));
+  PyDict_SetItemString(d, "NPY_NTYPES", PyInt_FromLong(NPY_NTYPES));
+  PyDict_SetItemString(d, "NPY_NOTYPE", PyInt_FromLong(NPY_NOTYPE));
+  PyDict_SetItemString(d, "NPY_USERDEF", PyInt_FromLong(NPY_USERDEF));
 
-  PyDict_SetItemString(d, "CONTIGUOUS", PyInt_FromLong(NPY_CONTIGUOUS));
-  PyDict_SetItemString(d, "FORTRAN", PyInt_FromLong(NPY_FORTRAN));
-  PyDict_SetItemString(d, "OWNDATA", PyInt_FromLong(NPY_OWNDATA));
-  PyDict_SetItemString(d, "FORCECAST", PyInt_FromLong(NPY_FORCECAST));
-  PyDict_SetItemString(d, "ENSURECOPY", PyInt_FromLong(NPY_ENSURECOPY));
-  PyDict_SetItemString(d, "ENSUREARRAY", PyInt_FromLong(NPY_ENSUREARRAY));
-  PyDict_SetItemString(d, "ALIGNED", PyInt_FromLong(NPY_ALIGNED));
-  PyDict_SetItemString(d, "WRITEABLE", PyInt_FromLong(NPY_WRITEABLE));
-  PyDict_SetItemString(d, "UPDATEIFCOPY", PyInt_FromLong(NPY_UPDATEIFCOPY));
+  PyDict_SetItemString(d, "CONTIGUOUS", PyInt_FromLong(NPY_ARRAY_C_CONTIGUOUS));
+  PyDict_SetItemString(d, "FORTRAN", PyInt_FromLong(NPY_ARRAY_F_CONTIGUOUS));
+  PyDict_SetItemString(d, "OWNDATA", PyInt_FromLong(NPY_ARRAY_OWNDATA));
+  PyDict_SetItemString(d, "FORCECAST", PyInt_FromLong(NPY_ARRAY_FORCECAST));
+  PyDict_SetItemString(d, "ENSURECOPY", PyInt_FromLong(NPY_ARRAY_ENSURECOPY));
+  PyDict_SetItemString(d, "ENSUREARRAY", PyInt_FromLong(NPY_ARRAY_ENSUREARRAY));
+  PyDict_SetItemString(d, "ALIGNED", PyInt_FromLong(NPY_ARRAY_ALIGNED));
+  PyDict_SetItemString(d, "WRITEABLE", PyInt_FromLong(NPY_ARRAY_WRITEABLE));
+  PyDict_SetItemString(d, "UPDATEIFCOPY", PyInt_FromLong(NPY_ARRAY_UPDATEIFCOPY));
 
-  PyDict_SetItemString(d, "BEHAVED", PyInt_FromLong(NPY_BEHAVED));
-  PyDict_SetItemString(d, "BEHAVED_NS", PyInt_FromLong(NPY_BEHAVED_NS));
-  PyDict_SetItemString(d, "CARRAY", PyInt_FromLong(NPY_CARRAY));
-  PyDict_SetItemString(d, "FARRAY", PyInt_FromLong(NPY_FARRAY));
-  PyDict_SetItemString(d, "CARRAY_RO", PyInt_FromLong(NPY_CARRAY_RO));
-  PyDict_SetItemString(d, "FARRAY_RO", PyInt_FromLong(NPY_FARRAY_RO));
-  PyDict_SetItemString(d, "DEFAULT", PyInt_FromLong(NPY_DEFAULT));
-  PyDict_SetItemString(d, "UPDATE_ALL", PyInt_FromLong(NPY_UPDATE_ALL));
+  PyDict_SetItemString(d, "BEHAVED", PyInt_FromLong(NPY_ARRAY_BEHAVED));
+  PyDict_SetItemString(d, "BEHAVED_NS", PyInt_FromLong(NPY_ARRAY_BEHAVED_NS));
+  PyDict_SetItemString(d, "CARRAY", PyInt_FromLong(NPY_ARRAY_CARRAY));
+  PyDict_SetItemString(d, "FARRAY", PyInt_FromLong(NPY_ARRAY_FARRAY));
+  PyDict_SetItemString(d, "CARRAY_RO", PyInt_FromLong(NPY_ARRAY_CARRAY_RO));
+  PyDict_SetItemString(d, "FARRAY_RO", PyInt_FromLong(NPY_ARRAY_FARRAY_RO));
+  PyDict_SetItemString(d, "DEFAULT", PyInt_FromLong(NPY_ARRAY_DEFAULT));
+  PyDict_SetItemString(d, "UPDATE_ALL", PyInt_FromLong(NPY_ARRAY_UPDATE_ALL));
 
   if (PyErr_Occurred())
     Py_FatalError("can't initialize module wrap");

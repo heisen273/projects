@@ -1,4 +1,5 @@
 # http://g95.sourceforge.net/
+from __future__ import division, absolute_import, print_function
 
 from numpy.distutils.fcompiler import FCompiler
 
@@ -21,7 +22,7 @@ class G95FCompiler(FCompiler):
         'compiler_f77' : ["g95", "-ffixed-form"],
         'compiler_fix' : ["g95", "-ffixed-form"],
         'compiler_f90' : ["g95"],
-        'linker_so'    : ["<F90>","-shared"],
+        'linker_so'    : ["<F90>", "-shared"],
         'archiver'     : ["ar", "-cr"],
         'ranlib'       : ["ranlib"]
         }

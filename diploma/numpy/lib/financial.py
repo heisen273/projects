@@ -1,10 +1,15 @@
-# Some simple financial calculations
-#  patterned after spreadsheet computations.
+"""Some simple financial calculations
 
-# There is some complexity in each function
-#  so that the functions behave like ufuncs with
-#  broadcasting and being able to be called with scalars
-#  or arrays (or other sequences).
+patterned after spreadsheet computations.
+
+There is some complexity in each function
+so that the functions behave like ufuncs with
+broadcasting and being able to be called with scalars
+or arrays (or other sequences).
+
+"""
+from __future__ import division, absolute_import, print_function
+
 import numpy as np
 
 __all__ = ['fv', 'pmt', 'nper', 'ipmt', 'ppmt', 'pv', 'rate',
@@ -18,9 +23,13 @@ _when_to_num = {'end':0, 'begin':1,
                 'finish':0}
 
 def _convert_when(when):
+    #Test to see if when has already been converted to ndarray
+    #This will happen if one function calls another, for example ppmt
+    if isinstance(when, np.ndarray):
+        return when
     try:
         return _when_to_num[when]
-    except KeyError:
+    except (KeyError, TypeError):
         return [_when_to_num[x] for x in when]
 
 
@@ -106,11 +115,12 @@ def fv(rate, nper, pmt, pv, when='end'):
 
     """
     when = _convert_when(when)
-    rate, nper, pmt, pv, when = map(np.asarray, [rate, nper, pmt, pv, when])
+    (rate, nper, pmt, pv, when) = map(np.asarray, [rate, nper, pmt, pv, when])
     temp = (1+rate)**nper
     miter = np.broadcast(rate, nper, pmt, pv, when)
     zer = np.zeros(miter.shape)
-    fact = np.where(rate==zer, nper+zer, (1+rate*when)*(temp-1)/rate+zer)
+    fact = np.where(rate == zer, nper + zer,
+                    (1 + rate*when)*(temp - 1)/rate + zer)
     return -(pv*temp + pmt*fact)
 
 def pmt(rate, nper, pv, fv=0, when='end'):
@@ -138,7 +148,7 @@ def pmt(rate, nper, pv, fv=0, when='end'):
         Number of compounding periods
     pv : array_like
         Present value
-    fv : array_like (optional)
+    fv : array_like,  optional
         Future value (default = 0)
     when : {{'begin', 1}, {'end', 0}}, {string, int}
         When payments are due ('begin' (1) or 'end' (0))
@@ -197,11 +207,12 @@ def pmt(rate, nper, pv, fv=0, when='end'):
 
     """
     when = _convert_when(when)
-    rate, nper, pv, fv, when = map(np.asarray, [rate, nper, pv, fv, when])
-    temp = (1+rate)**nper
-    miter = np.broadcast(rate, nper, pv, fv, when)
-    zer = np.zeros(miter.shape)
-    fact = np.where(rate==zer, nper+zer, (1+rate*when)*(temp-1)/rate+zer)
+    (rate, nper, pv, fv, when) = map(np.asarray, [rate, nper, pv, fv, when])
+    temp = (1 + rate)**nper
+    mask = (rate == 0.0)
+    np.copyto(rate, 1.0, where=mask)
+    z = np.zeros(np.broadcast(rate, nper, pv, fv, when).shape)
+    fact = np.where(mask != z, nper + z, (1 + rate*when)*(temp - 1)/rate + z)
     return -(fv + pv*temp) / fact
 
 def nper(rate, pmt, pv, fv=0, when='end'):
@@ -236,8 +247,8 @@ def nper(rate, pmt, pv, fv=0, when='end'):
     If you only had $150/month to pay towards the loan, how long would it take
     to pay-off a loan of $8,000 at 7% annual interest?
 
-    >>> np.nper(0.07/12, -150, 8000)
-    64.073348770661852
+    >>> print round(np.nper(0.07/12, -150, 8000), 5)
+    64.07335
 
     So, over 64 months would be required to pay off the loan.
 
@@ -254,17 +265,14 @@ def nper(rate, pmt, pv, fv=0, when='end'):
 
     """
     when = _convert_when(when)
-    rate, pmt, pv, fv, when = map(np.asarray, [rate, pmt, pv, fv, when])
+    (rate, pmt, pv, fv, when) = map(np.asarray, [rate, pmt, pv, fv, when])
 
     use_zero_rate = False
-    old_err = np.seterr(divide="raise")
-    try:
+    with np.errstate(divide="raise"):
         try:
             z = pmt*(1.0+rate*when)/rate
         except FloatingPointError:
             use_zero_rate = True
-    finally:
-        np.seterr(**old_err)
 
     if use_zero_rate:
         return (-fv + pv) / (pmt + 0.0)
@@ -273,11 +281,11 @@ def nper(rate, pmt, pv, fv=0, when='end'):
         B = np.log((-fv+z) / (pv+z))/np.log(1.0+rate)
         miter = np.broadcast(rate, pmt, pv, fv, when)
         zer = np.zeros(miter.shape)
-        return np.where(rate==zer, A+zer, B+zer) + 0.0
+        return np.where(rate == zer, A + zer, B + zer) + 0.0
 
 def ipmt(rate, per, nper, pv, fv=0.0, when='end'):
     """
-    Not implemented. Compute the payment portion for loan interest.
+    Compute the interest portion of a payment.
 
     Parameters
     ----------
@@ -314,14 +322,74 @@ def ipmt(rate, per, nper, pv, fv=0.0, when='end'):
 
     ``pmt = ppmt + ipmt``
 
+    Examples
+    --------
+    What is the amortization schedule for a 1 year loan of $2500 at
+    8.24% interest per year compounded monthly?
+
+    >>> principal = 2500.00
+
+    The 'per' variable represents the periods of the loan.  Remember that
+    financial equations start the period count at 1!
+
+    >>> per = np.arange(1*12) + 1
+    >>> ipmt = np.ipmt(0.0824/12, per, 1*12, principal)
+    >>> ppmt = np.ppmt(0.0824/12, per, 1*12, principal)
+
+    Each element of the sum of the 'ipmt' and 'ppmt' arrays should equal
+    'pmt'.
+
+    >>> pmt = np.pmt(0.0824/12, 1*12, principal)
+    >>> np.allclose(ipmt + ppmt, pmt)
+    True
+
+    >>> fmt = '{0:2d} {1:8.2f} {2:8.2f} {3:8.2f}'
+    >>> for payment in per:
+    ...     index = payment - 1
+    ...     principal = principal + ppmt[index]
+    ...     print fmt.format(payment, ppmt[index], ipmt[index], principal)
+     1  -200.58   -17.17  2299.42
+     2  -201.96   -15.79  2097.46
+     3  -203.35   -14.40  1894.11
+     4  -204.74   -13.01  1689.37
+     5  -206.15   -11.60  1483.22
+     6  -207.56   -10.18  1275.66
+     7  -208.99    -8.76  1066.67
+     8  -210.42    -7.32   856.25
+     9  -211.87    -5.88   644.38
+    10  -213.32    -4.42   431.05
+    11  -214.79    -2.96   216.26
+    12  -216.26    -1.49    -0.00
+
+    >>> interestpd = np.sum(ipmt)
+    >>> np.round(interestpd, 2)
+    -112.98
+
     """
-    total = pmt(rate, nper, pv, fv, when)
-    # Now, compute the nth step in the amortization
-    raise NotImplementedError
+    when = _convert_when(when)
+    rate, per, nper, pv, fv, when = np.broadcast_arrays(rate, per, nper,
+                                                        pv, fv, when)
+    total_pmt = pmt(rate, nper, pv, fv, when)
+    ipmt = _rbl(rate, per, total_pmt, pv, when)*rate
+    try:
+        ipmt = np.where(when == 1, ipmt/(1 + rate), ipmt)
+        ipmt = np.where(np.logical_and(when == 1, per == 1), 0.0, ipmt)
+    except IndexError:
+        pass
+    return ipmt
+
+def _rbl(rate, per, pmt, pv, when):
+    """
+    This function is here to simply have a different name for the 'fv'
+    function to not interfere with the 'fv' keyword argument within the 'ipmt'
+    function.  It is the 'remaining balance on loan' which might be useful as
+    it's own function, but is easily calculated with the 'fv' function.
+    """
+    return fv(rate, (per - 1), pmt, pv, when)
 
 def ppmt(rate, per, nper, pv, fv=0.0, when='end'):
     """
-    Not implemented. Compute the payment against loan principal.
+    Compute the payment against loan principal.
 
     Parameters
     ----------
@@ -434,7 +502,7 @@ def pv(rate, nper, pmt, fv=0.0, when='end'):
 
     """
     when = _convert_when(when)
-    rate, nper, pmt, fv, when = map(np.asarray, [rate, nper, pmt, fv, when])
+    (rate, nper, pmt, fv, when) = map(np.asarray, [rate, nper, pmt, fv, when])
     temp = (1+rate)**nper
     miter = np.broadcast(rate, nper, pmt, fv, when)
     zer = np.zeros(miter.shape)
@@ -442,12 +510,16 @@ def pv(rate, nper, pmt, fv=0.0, when='end'):
     return -(fv + pmt*fact)/temp
 
 # Computed with Sage
-#  (y + (r + 1)^n*x + p*((r + 1)^n - 1)*(r*w + 1)/r)/(n*(r + 1)^(n - 1)*x - p*((r + 1)^n - 1)*(r*w + 1)/r^2 + n*p*(r + 1)^(n - 1)*(r*w + 1)/r + p*((r + 1)^n - 1)*w/r)
+#  (y + (r + 1)^n*x + p*((r + 1)^n - 1)*(r*w + 1)/r)/(n*(r + 1)^(n - 1)*x -
+#  p*((r + 1)^n - 1)*(r*w + 1)/r^2 + n*p*(r + 1)^(n - 1)*(r*w + 1)/r +
+#  p*((r + 1)^n - 1)*w/r)
 
 def _g_div_gp(r, n, p, x, y, w):
     t1 = (r+1)**n
     t2 = (r+1)**(n-1)
-    return (y + t1*x + p*(t1 - 1)*(r*w + 1)/r)/(n*t2*x - p*(t1 - 1)*(r*w + 1)/(r**2) + n*p*t2*(r*w + 1)/r + p*(t1 - 1)*w/r)
+    return ((y + t1*x + p*(t1 - 1)*(r*w + 1)/r) /
+                (n*t2*x - p*(t1 - 1)*(r*w + 1)/(r**2) + n*p*t2*(r*w + 1)/r +
+                 p*(t1 - 1)*w/r))
 
 # Use Newton's iteration until the change is less than 1e-6
 #  for all values or a maximum of 100 iterations is reached.
@@ -500,14 +572,14 @@ def rate(nper, pmt, pv, fv, when='end', guess=0.10, tol=1e-6, maxiter=100):
 
     """
     when = _convert_when(when)
-    nper, pmt, pv, fv, when = map(np.asarray, [nper, pmt, pv, fv, when])
+    (nper, pmt, pv, fv, when) = map(np.asarray, [nper, pmt, pv, fv, when])
     rn = guess
     iter = 0
     close = False
     while (iter < maxiter) and not close:
         rnp1 = rn - _g_div_gp(rn, nper, pmt, pv, fv, when)
         diff = abs(rnp1-rn)
-        close = np.all(diff<tol)
+        close = np.all(diff < tol)
         iter += 1
         rn = rnp1
     if not close:
@@ -528,9 +600,9 @@ def irr(values):
     ----------
     values : array_like, shape(N,)
         Input cash flows per time period.  By convention, net "deposits"
-        are negative and net "withdrawals" are positive.  Thus, for example,
-        at least the first element of `values`, which represents the initial
-        investment, will typically be negative.
+        are negative and net "withdrawals" are positive.  Thus, for
+        example, at least the first element of `values`, which represents
+        the initial investment, will typically be negative.
 
     Returns
     -------
@@ -540,13 +612,13 @@ def irr(values):
     Notes
     -----
     The IRR is perhaps best understood through an example (illustrated
-    using np.irr in the Examples section below).  Suppose one invests
-    100 units and then makes the following withdrawals at regular
-    (fixed) intervals: 39, 59, 55, 20.  Assuming the ending value is 0,
-    one's 100 unit investment yields 173 units; however, due to the
-    combination of compounding and the periodic withdrawals, the
-    "average" rate of return is neither simply 0.73/4 nor (1.73)^0.25-1.
-    Rather, it is the solution (for :math:`r`) of the equation:
+    using np.irr in the Examples section below).  Suppose one invests 100
+    units and then makes the following withdrawals at regular (fixed)
+    intervals: 39, 59, 55, 20.  Assuming the ending value is 0, one's 100
+    unit investment yields 173 units; however, due to the combination of
+    compounding and the periodic withdrawals, the "average" rate of return
+    is neither simply 0.73/4 nor (1.73)^0.25-1.  Rather, it is the solution
+    (for :math:`r`) of the equation:
 
     .. math:: -100 + \\frac{39}{1+r} + \\frac{59}{(1+r)^2}
      + \\frac{55}{(1+r)^3} + \\frac{20}{(1+r)^4} = 0
@@ -563,21 +635,29 @@ def irr(values):
 
     Examples
     --------
-    >>> np.irr([-100, 39, 59, 55, 20])
-    0.2809484211599611
+    >>> round(irr([-100, 39, 59, 55, 20]), 5)
+    0.28095
+    >>> round(irr([-100, 0, 0, 74]), 5)
+    -0.0955
+    >>> round(irr([-100, 100, 0, -7]), 5)
+    -0.0833
+    >>> round(irr([-100, 100, 0, 7]), 5)
+    0.06206
+    >>> round(irr([-5, 10.5, 1, -8, 1]), 5)
+    0.0886
 
     (Compare with the Example given for numpy.lib.financial.npv)
 
     """
     res = np.roots(values[::-1])
-    # Find the root(s) between 0 and 1
-    mask = (res.imag == 0) & (res.real > 0) & (res.real <= 1)
-    res = res[mask].real
+    mask = (res.imag == 0) & (res.real > 0)
     if res.size == 0:
         return np.nan
+    res = res[mask].real
+    # NPV(rate) = 0 can have more than one solution so we return
+    # only the solution closest to zero.
     rate = 1.0/res - 1
-    if rate.size == 1:
-        rate = rate.item()
+    rate = rate.item(np.argmin(np.abs(rate)))
     return rate
 
 def npv(rate, values):
@@ -590,24 +670,24 @@ def npv(rate, values):
         The discount rate.
     values : array_like, shape(M, )
         The values of the time series of cash flows.  The (fixed) time
-        interval between cash flow "events" must be the same as that
-        for which `rate` is given (i.e., if `rate` is per year, then
-        precisely a year is understood to elapse between each cash flow
-        event).  By convention, investments or "deposits" are negative,
-        income or "withdrawals" are positive; `values` must begin with
-        the initial investment, thus `values[0]` will typically be
-        negative.
+        interval between cash flow "events" must be the same as that for
+        which `rate` is given (i.e., if `rate` is per year, then precisely
+        a year is understood to elapse between each cash flow event).  By
+        convention, investments or "deposits" are negative, income or
+        "withdrawals" are positive; `values` must begin with the initial
+        investment, thus `values[0]` will typically be negative.
 
     Returns
     -------
     out : float
-        The NPV of the input cash flow series `values` at the discount `rate`.
+        The NPV of the input cash flow series `values` at the discount
+        `rate`.
 
     Notes
     -----
     Returns the result of: [G]_
 
-    .. math :: \\sum_{t=0}^M{\\frac{values_t}{(1+rate)^{t}}}
+    .. math :: \\sum_{t=0}^{M-1}{\\frac{values_t}{(1+rate)^{t}}}
 
     References
     ----------
@@ -617,13 +697,13 @@ def npv(rate, values):
     Examples
     --------
     >>> np.npv(0.281,[-100, 39, 59, 55, 20])
-    -0.0066187288356340801
+    -0.0084785916384548798
 
     (Compare with the Example given for numpy.lib.financial.irr)
 
     """
     values = np.asarray(values)
-    return (values / (1+rate)**np.arange(1,len(values)+1)).sum(axis=0)
+    return (values / (1+rate)**np.arange(0, len(values))).sum(axis=0)
 
 def mirr(values, finance_rate, reinvest_rate):
     """
@@ -632,8 +712,9 @@ def mirr(values, finance_rate, reinvest_rate):
     Parameters
     ----------
     values : array_like
-        Cash flows (must contain at least one positive and one negative value)
-        or nan is returned.  The first value is considered a sunk cost at time zero.
+        Cash flows (must contain at least one positive and one negative
+        value) or nan is returned.  The first value is considered a sunk
+        cost at time zero.
     finance_rate : scalar
         Interest rate paid on the cash flows
     reinvest_rate : scalar
@@ -645,14 +726,12 @@ def mirr(values, finance_rate, reinvest_rate):
         Modified internal rate of return
 
     """
-
     values = np.asarray(values, dtype=np.double)
     n = values.size
     pos = values > 0
     neg = values < 0
     if not (pos.any() and neg.any()):
         return np.nan
-    numer = np.abs(npv(reinvest_rate, values*pos))*(1 + reinvest_rate)
-    denom = np.abs(npv(finance_rate, values*neg))*(1 + finance_rate)
+    numer = np.abs(npv(reinvest_rate, values*pos))
+    denom = np.abs(npv(finance_rate, values*neg))
     return (numer/denom)**(1.0/(n - 1))*(1 + reinvest_rate) - 1
-

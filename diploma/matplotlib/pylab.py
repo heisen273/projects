@@ -23,6 +23,7 @@ _Plotting commands
   broken_barh - a set of horizontal bars with gaps
   box       - set the axes frame on/off state
   boxplot   - make a box and whisker plot
+  violinplot - make a violin plot
   cla       - clear current axes
   clabel    - label a contour plot
   clf       - clear a figure window
@@ -83,7 +84,8 @@ _Plotting commands
   specgram - a spectrogram plot
   spy      - plot sparsity pattern using markers or image
   stem     - make a stem plot
-  subplot  - make a subplot (numrows, numcols, axesnum)
+  subplot  - make one subplot (numrows, numcols, axesnum)
+  subplots - make a figure with a set of (numrows, numcols) subplots
   subplots_adjust - change the params controlling the subplot positions of current figure
   subplot_tool - launch the subplot configuration tool
   suptitle   - add a figure title
@@ -155,15 +157,14 @@ _Matrix commands
 
 _Probability
 
-  levypdf   - The levy probability density function from the char. func.
   normpdf   - The Gaussian probability density function
   rand      - random numbers from the uniform distribution
   randn     - random numbers from the normal distribution
 
 _Statistics
 
-  amax       - the maximum along dimension m
-  amin       - the minimum along dimension m
+  amax      - the maximum along dimension m
+  amin      - the minimum along dimension m
   corrcoef  - correlation coefficient
   cov       - covariance matrix
   mean      - the mean along dimension m
@@ -172,7 +173,8 @@ _Statistics
   prod      - the product along dimension m
   ptp       - the max-min along dimension m
   std       - the standard deviation along dimension m
-  asum       - the sum along dimension m
+  asum      - the sum along dimension m
+  ksdensity - the kernel density estimate
 
 _Time series analysis
 
@@ -213,12 +215,20 @@ __end
 
 
 """
+from __future__ import (absolute_import, division, print_function,
+                        unicode_literals)
+
+from matplotlib.externals import six
+
 import sys, warnings
 
-from cbook import flatten, is_string_like, exception_to_str, \
+from matplotlib.cbook import flatten, is_string_like, exception_to_str, \
      silent_list, iterable, dedent
 
-from matplotlib import mpl  # pulls in most modules
+import matplotlib as mpl
+# make mpl.finance module available for backwards compatability, in case folks
+# using pylab interface depended on not having to import it
+import matplotlib.finance
 
 from matplotlib.dates import date2num, num2date,\
         datestr2num, strpdate2num, drange,\
@@ -242,12 +252,12 @@ from matplotlib.mlab import griddata, stineman_interp, slopes, \
     is_closed_polygon, path_length, distances_along_curve, vector_lengths
 
 from matplotlib.mlab import window_hanning, window_none,  detrend, demean, \
-     detrend_mean, detrend_none, detrend_linear, entropy, normpdf, levypdf, \
-     find, longest_contiguous_ones, longest_ones, prepca, \
+     detrend_mean, detrend_none, detrend_linear, entropy, normpdf, \
+     find, longest_contiguous_ones, longest_ones, \
      prctile, prctile_rank, \
      center_matrix, rk4, bivariate_normal, get_xyz_where, \
      get_sparse_matrix, dist, \
-     dist_point_to_segment, segments_intersect, fftsurr, liaupunov, movavg, \
+     dist_point_to_segment, segments_intersect, fftsurr, movavg, \
      exp_safe, \
      amap, rms_flat, l1norm, l2norm, norm_flat, frange,  identity, \
      base_repr, binary_repr, log2, ispower2, \
@@ -268,31 +278,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import numpy.ma as ma
 
-def load(*args, **kwargs):
-    raise  NotImplementedError(load.__doc__)
-load.__doc__ = """\
-    pylab no longer provides a load function, though the old pylab
-    function is still available as matplotlib.mlab.load (you can refer
-    to it in pylab as "mlab.load").  However, for plain text files, we
-    recommend numpy.loadtxt, which was inspired by the old pylab.load
-    but now has more features.  For loading numpy arrays, we recommend
-    numpy.load, and its analog numpy.save, which are available in
-    pylab as np.load and np.save.
-    """
-
-
-def save(*args, **kwargs):
-    raise  NotImplementedError(save.__doc__)
-save.__doc__ = """\
-    pylab no longer provides a save function, though the old pylab
-    function is still available as matplotlib.mlab.save (you can still
-    refer to it in pylab as "mlab.save").  However, for plain text
-    files, we recommend numpy.savetxt.  For saving numpy arrays,
-    we recommend numpy.save, and its analog numpy.load, which are
-    available in pylab as np.save and np.load."""
-
 # don't let numpy's datetime hide stdlib
 import datetime
 
-if sys.version_info > (2, 6, 0):
-    bytes = __builtins__['bytes']
+# This is needed, or bytes will be numpy.random.bytes from
+# "from numpy.random import *" above
+bytes = __builtins__['bytes']

@@ -6,9 +6,6 @@ See the `fontconfig pattern specification
 information.
 """
 
-# Author : Michael Droettboom <mdroe@stsci.edu>
-# License : matplotlib license (PSF compatible)
-
 # This class is defined here because it must be available in:
 #   - The old-style config framework (:file:`rcsetup.py`)
 #   - The traits-based config framework (:file:`mpltraits.py`)
@@ -19,9 +16,14 @@ information.
 # dependency problems, or an undesired dependency on traits even
 # when the traits-based config framework is not used.
 
-import re
-from matplotlib.pyparsing import Literal, ZeroOrMore, \
-    Optional, Regex, StringEnd, ParseException, Suppress
+from __future__ import (absolute_import, division, print_function,
+                        unicode_literals)
+
+from matplotlib.externals import six
+
+import re, sys
+from pyparsing import Literal, ZeroOrMore, \
+     Optional, Regex, StringEnd, ParseException, Suppress
 
 family_punc = r'\\\-:,'
 family_unescape = re.compile(r'\\([%s])' % family_punc).sub
@@ -31,7 +33,7 @@ value_punc = r'\\=_:,'
 value_unescape = re.compile(r'\\([%s])' % value_punc).sub
 value_escape = re.compile(r'([%s])' % value_punc).sub
 
-class FontconfigPatternParser:
+class FontconfigPatternParser(object):
     """A simple pyparsing-based parser for fontconfig-style patterns.
 
     See the `fontconfig pattern specification
@@ -123,10 +125,14 @@ class FontconfigPatternParser:
         props = self._properties = {}
         try:
             self._parser.parseString(pattern)
-        except self.ParseException, e:
-            raise ValueError("Could not parse font string: '%s'\n%s" % (pattern, e))
+        except self.ParseException as e:
+            raise ValueError(
+                "Could not parse font string: '%s'\n%s" % (pattern, e))
 
         self._properties = None
+
+        self._parser.resetCache()
+
         return props
 
     def _family(self, s, loc, tokens):

@@ -1,22 +1,246 @@
 """
-A collection of utility functions and classes.  Many (but not all)
-from the Python Cookbook -- hence the name cbook
+A collection of utility functions and classes.  Originally, many
+(but not all) were from the Python Cookbook -- hence the name cbook.
+
+This module is safe to import from anywhere within matplotlib;
+it imports matplotlib only at runtime.
 """
-from __future__ import generators
-import re, os, errno, sys, StringIO, traceback, locale, threading, types
-import time, datetime
+
+from __future__ import (absolute_import, division, print_function,
+                        unicode_literals)
+
+from matplotlib.externals import six
+from matplotlib.externals.six.moves import xrange, zip
+from itertools import repeat
+
+import datetime
+import errno
+from functools import reduce
+import glob
+import gzip
+import io
+import locale
+import os
+import re
+import sys
+import time
+import traceback
+import types
 import warnings
+from weakref import ref, WeakKeyDictionary
+
 import numpy as np
 import numpy.ma as ma
-from weakref import ref, WeakKeyDictionary
-import cPickle
-import os.path
-import random
-import new
 
-import matplotlib
 
-major, minor1, minor2, s, tmp = sys.version_info
+class MatplotlibDeprecationWarning(UserWarning):
+    """
+    A class for issuing deprecation warnings for Matplotlib users.
+
+    In light of the fact that Python builtin DeprecationWarnings are ignored
+    by default as of Python 2.7 (see link below), this class was put in to
+    allow for the signaling of deprecation, but via UserWarnings which are not
+    ignored by default.
+
+    http://docs.python.org/dev/whatsnew/2.7.html#the-future-for-python-2-x
+    """
+    pass
+
+mplDeprecation = MatplotlibDeprecationWarning
+
+
+def _generate_deprecation_message(since, message='', name='',
+                                  alternative='', pending=False,
+                                  obj_type='attribute'):
+
+    if not message:
+        altmessage = ''
+
+        if pending:
+            message = (
+                'The %(func)s %(obj_type)s will be deprecated in a '
+                'future version.')
+        else:
+            message = (
+                'The %(func)s %(obj_type)s was deprecated in version '
+                '%(since)s.')
+        if alternative:
+            altmessage = ' Use %s instead.' % alternative
+
+        message = ((message % {
+            'func': name,
+            'name': name,
+            'alternative': alternative,
+            'obj_type': obj_type,
+            'since': since}) +
+            altmessage)
+
+    return message
+
+
+def warn_deprecated(
+        since, message='', name='', alternative='', pending=False,
+        obj_type='attribute'):
+    """
+    Used to display deprecation warning in a standard way.
+
+    Parameters
+    ------------
+    since : str
+        The release at which this API became deprecated.
+
+    message : str, optional
+        Override the default deprecation message.  The format
+        specifier `%(func)s` may be used for the name of the function,
+        and `%(alternative)s` may be used in the deprecation message
+        to insert the name of an alternative to the deprecated
+        function.  `%(obj_type)` may be used to insert a friendly name
+        for the type of object being deprecated.
+
+    name : str, optional
+        The name of the deprecated function; if not provided the name
+        is automatically determined from the passed in function,
+        though this is useful in the case of renamed functions, where
+        the new function is just assigned to the name of the
+        deprecated function.  For example::
+
+            def new_function():
+                ...
+            oldFunction = new_function
+
+    alternative : str, optional
+        An alternative function that the user may use in place of the
+        deprecated function.  The deprecation warning will tell the user about
+        this alternative if provided.
+
+    pending : bool, optional
+        If True, uses a PendingDeprecationWarning instead of a
+        DeprecationWarning.
+
+    obj_type : str, optional
+        The object type being deprecated.
+
+    Examples
+    --------
+
+        Basic example::
+
+            # To warn of the deprecation of "matplotlib.name_of_module"
+            warn_deprecated('1.4.0', name='matplotlib.name_of_module',
+                            obj_type='module')
+
+    """
+    message = _generate_deprecation_message(
+        since, message, name, alternative, pending, obj_type)
+
+    warnings.warn(message, mplDeprecation, stacklevel=1)
+
+
+def deprecated(since, message='', name='', alternative='', pending=False,
+               obj_type='function'):
+    """
+    Decorator to mark a function as deprecated.
+
+    Parameters
+    ------------
+    since : str
+        The release at which this API became deprecated.  This is
+        required.
+
+    message : str, optional
+        Override the default deprecation message.  The format
+        specifier `%(func)s` may be used for the name of the function,
+        and `%(alternative)s` may be used in the deprecation message
+        to insert the name of an alternative to the deprecated
+        function.  `%(obj_type)` may be used to insert a friendly name
+        for the type of object being deprecated.
+
+    name : str, optional
+        The name of the deprecated function; if not provided the name
+        is automatically determined from the passed in function,
+        though this is useful in the case of renamed functions, where
+        the new function is just assigned to the name of the
+        deprecated function.  For example::
+
+            def new_function():
+                ...
+            oldFunction = new_function
+
+    alternative : str, optional
+        An alternative function that the user may use in place of the
+        deprecated function.  The deprecation warning will tell the user about
+        this alternative if provided.
+
+    pending : bool, optional
+        If True, uses a PendingDeprecationWarning instead of a
+        DeprecationWarning.
+
+    Examples
+    --------
+
+        Basic example::
+
+            @deprecated('1.4.0')
+            def the_function_to_deprecate():
+                pass
+
+    """
+    def deprecate(func, message=message, name=name, alternative=alternative,
+                  pending=pending):
+        import functools
+        import textwrap
+
+        if isinstance(func, classmethod):
+            try:
+                func = func.__func__
+            except AttributeError:
+                # classmethods in Python2.6 and below lack the __func__
+                # attribute so we need to hack around to get it
+                method = func.__get__(None, object)
+                if hasattr(method, '__func__'):
+                    func = method.__func__
+                elif hasattr(method, 'im_func'):
+                    func = method.im_func
+                else:
+                    # Nothing we can do really...  just return the original
+                    # classmethod
+                    return func
+            is_classmethod = True
+        else:
+            is_classmethod = False
+
+        if not name:
+            name = func.__name__
+
+        message = _generate_deprecation_message(
+            since, message, name, alternative, pending, obj_type)
+
+        @functools.wraps(func)
+        def deprecated_func(*args, **kwargs):
+            warnings.warn(message, mplDeprecation, stacklevel=2)
+
+            return func(*args, **kwargs)
+
+        old_doc = deprecated_func.__doc__
+        if not old_doc:
+            old_doc = ''
+        old_doc = textwrap.dedent(old_doc).strip('\n')
+        message = message.strip()
+        new_doc = (('\n.. deprecated:: %(since)s'
+                    '\n    %(message)s\n\n' %
+                    {'since': since, 'message': message}) + old_doc)
+        if not old_doc:
+            # This is to prevent a spurious 'unexected unindent' warning from
+            # docutils when the original docstring was blank.
+            new_doc += r'\ '
+
+        deprecated_func.__doc__ = new_doc
+
+        if is_classmethod:
+            deprecated_func = classmethod(deprecated_func)
+        return deprecated_func
+
+    return deprecate
 
 
 # On some systems, locale.getpreferredencoding returns None,
@@ -28,23 +252,26 @@ major, minor1, minor2, s, tmp = sys.version_info
 # On some systems, getpreferredencoding sets the locale, which has
 # side effects.  Passing False eliminates those side effects.
 
-
 def unicode_safe(s):
     import matplotlib
 
-    try:
-        preferredencoding = locale.getpreferredencoding(
-            matplotlib.rcParams['axes.formatter.use_locale']).strip()
-        if not preferredencoding:
+    if isinstance(s, bytes):
+        try:
+            preferredencoding = locale.getpreferredencoding(
+                matplotlib.rcParams['axes.formatter.use_locale']).strip()
+            if not preferredencoding:
+                preferredencoding = None
+        except (ValueError, ImportError, AttributeError):
             preferredencoding = None
-    except (ValueError, ImportError, AttributeError):
-        preferredencoding = None
 
-    if preferredencoding is None: return unicode(s)
-    else: return unicode(s, preferredencoding)
+        if preferredencoding is None:
+            return six.text_type(s)
+        else:
+            return six.text_type(s, preferredencoding)
+    return s
 
 
-class converter:
+class converter(object):
     """
     Base class for handling string -> python type with support for
     missing values
@@ -52,17 +279,21 @@ class converter:
     def __init__(self, missing='Null', missingval=None):
         self.missing = missing
         self.missingval = missingval
+
     def __call__(self, s):
-        if s==self.missing: return self.missingval
+        if s == self.missing:
+            return self.missingval
         return s
 
     def is_missing(self, s):
-        return not s.strip() or s==self.missing
+        return not s.strip() or s == self.missing
+
 
 class tostr(converter):
     'convert to string or None'
     def __init__(self, missing='Null', missingval=''):
         converter.__init__(self, missing=missing, missingval=missingval)
+
 
 class todatetime(converter):
     'convert to a datetime or None'
@@ -72,10 +303,10 @@ class todatetime(converter):
         self.fmt = fmt
 
     def __call__(self, s):
-        if self.is_missing(s): return self.missingval
+        if self.is_missing(s):
+            return self.missingval
         tup = time.strptime(s, self.fmt)
         return datetime.datetime(*tup[:6])
-
 
 
 class todate(converter):
@@ -84,18 +315,23 @@ class todate(converter):
         'use a :func:`time.strptime` format string for conversion'
         converter.__init__(self, missing, missingval)
         self.fmt = fmt
+
     def __call__(self, s):
-        if self.is_missing(s): return self.missingval
+        if self.is_missing(s):
+            return self.missingval
         tup = time.strptime(s, self.fmt)
         return datetime.date(*tup[:3])
+
 
 class tofloat(converter):
     'convert to a float or None'
     def __init__(self, missing='Null', missingval=None):
         converter.__init__(self, missing)
         self.missingval = missingval
+
     def __call__(self, s):
-        if self.is_missing(s): return self.missingval
+        if self.is_missing(s):
+            return self.missingval
         return float(s)
 
 
@@ -105,32 +341,139 @@ class toint(converter):
         converter.__init__(self, missing)
 
     def __call__(self, s):
-        if self.is_missing(s): return self.missingval
+        if self.is_missing(s):
+            return self.missingval
         return int(s)
 
-class CallbackRegistry:
+
+class _BoundMethodProxy(object):
+    '''
+    Our own proxy object which enables weak references to bound and unbound
+    methods and arbitrary callables. Pulls information about the function,
+    class, and instance out of a bound method. Stores a weak reference to the
+    instance to support garbage collection.
+
+    @organization: IBM Corporation
+    @copyright: Copyright (c) 2005, 2006 IBM Corporation
+    @license: The BSD License
+
+    Minor bugfixes by Michael Droettboom
+    '''
+    def __init__(self, cb):
+        self._hash = hash(cb)
+        self._destroy_callbacks = []
+        try:
+            try:
+                if six.PY3:
+                    self.inst = ref(cb.__self__, self._destroy)
+                else:
+                    self.inst = ref(cb.im_self, self._destroy)
+            except TypeError:
+                self.inst = None
+            if six.PY3:
+                self.func = cb.__func__
+                self.klass = cb.__self__.__class__
+            else:
+                self.func = cb.im_func
+                self.klass = cb.im_class
+        except AttributeError:
+            self.inst = None
+            self.func = cb
+            self.klass = None
+
+    def add_destroy_callback(self, callback):
+        self._destroy_callbacks.append(_BoundMethodProxy(callback))
+
+    def _destroy(self, wk):
+        for callback in self._destroy_callbacks:
+            try:
+                callback(self)
+            except ReferenceError:
+                pass
+
+    def __getstate__(self):
+        d = self.__dict__.copy()
+        # de-weak reference inst
+        inst = d['inst']
+        if inst is not None:
+            d['inst'] = inst()
+        return d
+
+    def __setstate__(self, statedict):
+        self.__dict__ = statedict
+        inst = statedict['inst']
+        # turn inst back into a weakref
+        if inst is not None:
+            self.inst = ref(inst)
+
+    def __call__(self, *args, **kwargs):
+        '''
+        Proxy for a call to the weak referenced object. Take
+        arbitrary params to pass to the callable.
+
+        Raises `ReferenceError`: When the weak reference refers to
+        a dead object
+        '''
+        if self.inst is not None and self.inst() is None:
+            raise ReferenceError
+        elif self.inst is not None:
+            # build a new instance method with a strong reference to the
+            # instance
+
+            mtd = types.MethodType(self.func, self.inst())
+
+        else:
+            # not a bound method, just return the func
+            mtd = self.func
+        # invoke the callable and return the result
+        return mtd(*args, **kwargs)
+
+    def __eq__(self, other):
+        '''
+        Compare the held function and instance with that held by
+        another proxy.
+        '''
+        try:
+            if self.inst is None:
+                return self.func == other.func and other.inst is None
+            else:
+                return self.func == other.func and self.inst() == other.inst()
+        except Exception:
+            return False
+
+    def __ne__(self, other):
+        '''
+        Inverse of __eq__.
+        '''
+        return not self.__eq__(other)
+
+    def __hash__(self):
+        return self._hash
+
+
+class CallbackRegistry(object):
     """
     Handle registering and disconnecting for a set of signals and
-    callbacks::
+    callbacks:
 
-       def oneat(x):
-           print 'eat', x
+        >>> def oneat(x):
+        ...    print('eat', x)
+        >>> def ondrink(x):
+        ...    print('drink', x)
 
-       def ondrink(x):
-           print 'drink', x
+        >>> from matplotlib.cbook import CallbackRegistry
+        >>> callbacks = CallbackRegistry()
 
-       callbacks = CallbackRegistry()
+        >>> id_eat = callbacks.connect('eat', oneat)
+        >>> id_drink = callbacks.connect('drink', ondrink)
 
-       ideat = callbacks.connect('eat', oneat)
-       iddrink = callbacks.connect('drink', ondrink)
-
-       #tmp = callbacks.connect('drunk', ondrink) # this will raise a ValueError
-
-       callbacks.process('drink', 123)    # will call oneat
-       callbacks.process('eat', 456)      # will call ondrink
-       callbacks.process('be merry', 456) # nothing will be called
-       callbacks.disconnect(ideat)        # disconnect oneat
-       callbacks.process('eat', 456)      # nothing will be called
+        >>> callbacks.process('drink', 123)
+        drink 123
+        >>> callbacks.process('eat', 456)
+        eat 456
+        >>> callbacks.process('be merry', 456) # nothing will be called
+        >>> callbacks.disconnect(id_eat)
+        >>> callbacks.process('eat', 456)      # nothing will be called
 
     In practice, one should always disconnect all callbacks when they
     are no longer needed to avoid dangling references (and thus memory
@@ -146,106 +489,66 @@ class CallbackRegistry:
     `"Mindtrove" blog
     <http://mindtrove.info/articles/python-weak-references/>`_.
     """
-    class BoundMethodProxy(object):
-        '''
-        Our own proxy object which enables weak references to bound and unbound
-        methods and arbitrary callables. Pulls information about the function,
-        class, and instance out of a bound method. Stores a weak reference to the
-        instance to support garbage collection.
-
-        @organization: IBM Corporation
-        @copyright: Copyright (c) 2005, 2006 IBM Corporation
-        @license: The BSD License
-
-        Minor bugfixes by Michael Droettboom
-        '''
-        def __init__(self, cb):
-            try:
-                try:
-                    self.inst = ref(cb.im_self)
-                except TypeError:
-                    self.inst = None
-                self.func = cb.im_func
-                self.klass = cb.im_class
-            except AttributeError:
-                self.inst = None
-                self.func = cb
-                self.klass = None
-
-        def __call__(self, *args, **kwargs):
-            '''
-            Proxy for a call to the weak referenced object. Take
-            arbitrary params to pass to the callable.
-
-            Raises `ReferenceError`: When the weak reference refers to
-            a dead object
-            '''
-            if self.inst is not None and self.inst() is None:
-                raise ReferenceError
-            elif self.inst is not None:
-                # build a new instance method with a strong reference to the instance
-                mtd = new.instancemethod(self.func, self.inst(), self.klass)
-            else:
-                # not a bound method, just return the func
-                mtd = self.func
-            # invoke the callable and return the result
-            return mtd(*args, **kwargs)
-
-        def __eq__(self, other):
-            '''
-            Compare the held function and instance with that held by
-            another proxy.
-            '''
-            try:
-                if self.inst is None:
-                    return self.func == other.func and other.inst is None
-                else:
-                    return self.func == other.func and self.inst() == other.inst()
-            except Exception:
-                return False
-
-        def __ne__(self, other):
-            '''
-            Inverse of __eq__.
-            '''
-            return not self.__eq__(other)
-
-    def __init__(self, *args):
-        if len(args):
-            warnings.warn(
-                'CallbackRegistry no longer requires a list of callback types.  Ignoring arguments',
-                DeprecationWarning)
+    def __init__(self):
         self.callbacks = dict()
         self._cid = 0
-        self._func_cid_map = WeakKeyDictionary()
+        self._func_cid_map = {}
+
+    def __getstate__(self):
+        # We cannot currently pickle the callables in the registry, so
+        # return an empty dictionary.
+        return {}
+
+    def __setstate__(self, state):
+        # re-initialise an empty callback registry
+        self.__init__()
 
     def connect(self, s, func):
         """
         register *func* to be called when a signal *s* is generated
         func will be called
         """
-        if func in self._func_cid_map:
-            return self._func_cid_map[func]
-        proxy = self.BoundMethodProxy(func)
+        self._func_cid_map.setdefault(s, WeakKeyDictionary())
+        # Note proxy not needed in python 3.
+        # TODO rewrite this when support for python2.x gets dropped.
+        proxy = _BoundMethodProxy(func)
+        if proxy in self._func_cid_map[s]:
+            return self._func_cid_map[s][proxy]
+
+        proxy.add_destroy_callback(self._remove_proxy)
         self._cid += 1
+        cid = self._cid
+        self._func_cid_map[s][proxy] = cid
         self.callbacks.setdefault(s, dict())
-        self.callbacks[s][self._cid] = proxy
-        self._func_cid_map[func] = self._cid
-        return self._cid
+        self.callbacks[s][cid] = proxy
+        return cid
+
+    def _remove_proxy(self, proxy):
+        for signal, proxies in list(six.iteritems(self._func_cid_map)):
+            try:
+                del self.callbacks[signal][proxies[proxy]]
+            except KeyError:
+                pass
+
+            if len(self.callbacks[signal]) == 0:
+                del self.callbacks[signal]
+                del self._func_cid_map[signal]
 
     def disconnect(self, cid):
         """
         disconnect the callback registered with callback id *cid*
         """
-        for eventname, callbackd in self.callbacks.items():
+        for eventname, callbackd in list(six.iteritems(self.callbacks)):
             try:
                 del callbackd[cid]
             except KeyError:
                 continue
             else:
-                for key, value in self._func_cid_map.items():
-                    if value == cid:
-                        del self._func_cid_map[key]
+                for signal, functions in list(
+                        six.iteritems(self._func_cid_map)):
+                    for function, value in list(six.iteritems(functions)):
+                        if value == cid:
+                            del functions[function]
                 return
 
     def process(self, s, *args, **kwargs):
@@ -254,102 +557,110 @@ class CallbackRegistry:
         callbacks on *s* will be called with *\*args* and *\*\*kwargs*
         """
         if s in self.callbacks:
-            for cid, proxy in self.callbacks[s].items():
-                # Clean out dead references
-                if proxy.inst is not None and proxy.inst() is None:
-                    del self.callbacks[s][cid]
-                else:
+            for cid, proxy in list(six.iteritems(self.callbacks[s])):
+                try:
                     proxy(*args, **kwargs)
+                except ReferenceError:
+                    self._remove_proxy(proxy)
 
-
-class Scheduler(threading.Thread):
-    """
-    Base class for timeout and idle scheduling
-    """
-    idlelock = threading.Lock()
-    id = 0
-
-    def __init__(self):
-        threading.Thread.__init__(self)
-        self.id = Scheduler.id
-        self._stopped = False
-        Scheduler.id += 1
-        self._stopevent = threading.Event()
-
-    def stop(self):
-        if self._stopped: return
-        self._stopevent.set()
-        self.join()
-        self._stopped = True
-
-class Timeout(Scheduler):
-    """
-    Schedule recurring events with a wait time in seconds
-    """
-    def __init__(self, wait, func):
-        Scheduler.__init__(self)
-        self.wait = wait
-        self.func = func
-
-    def run(self):
-
-        while not self._stopevent.isSet():
-            self._stopevent.wait(self.wait)
-            Scheduler.idlelock.acquire()
-            b = self.func(self)
-            Scheduler.idlelock.release()
-            if not b: break
-
-class Idle(Scheduler):
-    """
-    Schedule callbacks when scheduler is idle
-    """
-    # the prototype impl is a bit of a poor man's idle handler.  It
-    # just implements a short wait time.  But it will provide a
-    # placeholder for a proper impl ater
-    waittime = 0.05
-    def __init__(self, func):
-        Scheduler.__init__(self)
-        self.func = func
-
-    def run(self):
-
-        while not self._stopevent.isSet():
-            self._stopevent.wait(Idle.waittime)
-            Scheduler.idlelock.acquire()
-            b = self.func(self)
-            Scheduler.idlelock.release()
-            if not b: break
 
 class silent_list(list):
     """
     override repr when returning a list of matplotlib artists to
     prevent long, meaningless output.  This is meant to be used for a
-    homogeneous list of a give type
+    homogeneous list of a given type
     """
     def __init__(self, type, seq=None):
         self.type = type
-        if seq is not None: self.extend(seq)
+        if seq is not None:
+            self.extend(seq)
 
     def __repr__(self):
         return '<a list of %d %s objects>' % (len(self), self.type)
 
     def __str__(self):
-        return '<a list of %d %s objects>' % (len(self), self.type)
+        return repr(self)
+
+    def __getstate__(self):
+        # store a dictionary of this SilentList's state
+        return {'type': self.type, 'seq': self[:]}
+
+    def __setstate__(self, state):
+        self.type = state['type']
+        self.extend(state['seq'])
+
+
+class IgnoredKeywordWarning(UserWarning):
+    """
+    A class for issuing warnings about keyword arguments that will be ignored
+    by matplotlib
+    """
+    pass
+
+
+def local_over_kwdict(local_var, kwargs, *keys):
+    """
+    Enforces the priority of a local variable over potentially conflicting
+    argument(s) from a kwargs dict. The following possible output values are
+    considered in order of priority:
+
+        local_var > kwargs[keys[0]] > ... > kwargs[keys[-1]]
+
+    The first of these whose value is not None will be returned. If all are
+    None then None will be returned. Each key in keys will be removed from the
+    kwargs dict in place.
+
+    Parameters
+    ------------
+        local_var: any object
+            The local variable (highest priority)
+
+        kwargs: dict
+            Dictionary of keyword arguments; modified in place
+
+        keys: str(s)
+            Name(s) of keyword arguments to process, in descending order of
+            priority
+
+    Returns
+    ---------
+        out: any object
+            Either local_var or one of kwargs[key] for key in keys
+
+    Raises
+    --------
+        IgnoredKeywordWarning
+            For each key in keys that is removed from kwargs but not used as
+            the output value
+
+    """
+    out = local_var
+    for key in keys:
+        kwarg_val = kwargs.pop(key, None)
+        if kwarg_val is not None:
+            if out is None:
+                out = kwarg_val
+            else:
+                warnings.warn('"%s" keyword argument will be ignored' % key,
+                              IgnoredKeywordWarning)
+    return out
+
 
 def strip_math(s):
     'remove latex formatting from mathtext'
     remove = (r'\mathdefault', r'\rm', r'\cal', r'\tt', r'\it', '\\', '{', '}')
     s = s[1:-1]
-    for r in remove:  s = s.replace(r,'')
+    for r in remove:
+        s = s.replace(r, '')
     return s
 
-class Bunch:
+
+class Bunch(object):
     """
     Often we want to just collect a bunch of stuff together, naming each
     item of the bunch; a dictionary's OK for that, but a small do- nothing
     class is even handier, and prettier to use.  Whenever you want to
-    group a few variables:
+    group a few variables::
 
       >>> point = Bunch(datum=2, squared=4, coord=12)
       >>> point.datum
@@ -360,14 +671,17 @@ class Bunch:
     def __init__(self, **kwds):
         self.__dict__.update(kwds)
 
-
     def __repr__(self):
-        keys = self.__dict__.keys()
-        return 'Bunch(%s)'%', '.join(['%s=%s'%(k,self.__dict__[k]) for k in keys])
+        keys = six.iterkeys(self.__dict__)
+        return 'Bunch(%s)' % ', '.join(['%s=%s' % (k, self.__dict__[k])
+                                        for k
+                                        in keys])
+
 
 def unique(x):
     'Return a list of unique elements of *x*'
-    return dict([ (val, 1) for val in x]).keys()
+    return list(six.iterkeys(dict([(val, 1) for val in x])))
+
 
 def iterable(obj):
     'return true if *obj* is iterable'
@@ -380,40 +694,71 @@ def iterable(obj):
 
 def is_string_like(obj):
     'Return True if *obj* looks like a string'
-    if isinstance(obj, (str, unicode)): return True
+    if isinstance(obj, six.string_types):
+        return True
     # numpy strings are subclass of str, ma strings are not
     if ma.isMaskedArray(obj):
         if obj.ndim == 0 and obj.dtype.kind in 'SU':
             return True
         else:
             return False
-    try: obj + ''
-    except: return False
+    try:
+        obj + ''
+    except:
+        return False
     return True
+
 
 def is_sequence_of_strings(obj):
     """
     Returns true if *obj* is iterable and contains strings
     """
-    if not iterable(obj): return False
-    if is_string_like(obj): return False
+    if not iterable(obj):
+        return False
+    if is_string_like(obj) and not isinstance(obj, np.ndarray):
+        try:
+            obj = obj.values
+        except AttributeError:
+            # not pandas
+            return False
     for o in obj:
-        if not is_string_like(o): return False
+        if not is_string_like(o):
+            return False
     return True
+
 
 def is_writable_file_like(obj):
     'return true if *obj* looks like a file object with a *write* method'
-    return hasattr(obj, 'write') and callable(obj.write)
+    return hasattr(obj, 'write') and six.callable(obj.write)
+
+
+def file_requires_unicode(x):
+    """
+    Returns `True` if the given writable file-like object requires Unicode
+    to be written to it.
+    """
+    try:
+        x.write(b'')
+    except TypeError:
+        return True
+    else:
+        return False
+
 
 def is_scalar(obj):
     'return true if *obj* is not string like and is not iterable'
     return not is_string_like(obj) and not iterable(obj)
 
+
 def is_numlike(obj):
     'return true if *obj* looks like a number'
-    try: obj+1
-    except: return False
-    else: return True
+    try:
+        obj + 1
+    except:
+        return False
+    else:
+        return True
+
 
 def to_filehandle(fname, flag='rU', return_opened=False):
     """
@@ -423,17 +768,16 @@ def to_filehandle(fname, flag='rU', return_opened=False):
     """
     if is_string_like(fname):
         if fname.endswith('.gz'):
-            import gzip
             # get rid of 'U' in flag for gzipped files.
-            flag = flag.replace('U','')
+            flag = flag.replace('U', '')
             fh = gzip.open(fname, flag)
         elif fname.endswith('.bz2'):
             # get rid of 'U' in flag for bz2 files
-            flag = flag.replace('U','')
+            flag = flag.replace('U', '')
             import bz2
             fh = bz2.BZ2File(fname, flag)
         else:
-            fh = file(fname, flag)
+            fh = open(fname, flag)
         opened = True
     elif hasattr(fname, 'seek'):
         fh = fname
@@ -444,288 +788,85 @@ def to_filehandle(fname, flag='rU', return_opened=False):
         return fh, opened
     return fh
 
+
 def is_scalar_or_string(val):
+    """Return whether the given object is a scalar or string like."""
     return is_string_like(val) or not iterable(val)
 
-def _get_data_server(cache_dir, baseurl):
-    import urllib2
-    class ViewVCCachedServer(urllib2.HTTPSHandler):
-        """
-        Urllib2 handler that takes care of caching files.
-        The file cache.pck holds the directory of files that have been cached.
-        """
-        def __init__(self, cache_dir, baseurl):
-            urllib2.HTTPSHandler.__init__(self)
-            self.cache_dir = cache_dir
-            self.baseurl = baseurl
-            self.read_cache()
-            self.remove_stale_files()
-            self.opener = urllib2.build_opener(self)
 
-        def in_cache_dir(self, fn):
-            # make sure the datadir exists
-            reldir, filename = os.path.split(fn)
-            datadir = os.path.join(self.cache_dir, reldir)
-            if not os.path.exists(datadir):
-                os.makedirs(datadir)
-
-            return os.path.join(datadir, filename)
-
-        def read_cache(self):
-            """
-            Read the cache file from the cache directory.
-            """
-            fn = self.in_cache_dir('cache.pck')
-            if not os.path.exists(fn):
-                self.cache = {}
-                return
-
-            f = open(fn, 'rb')
-            cache = cPickle.load(f)
-            f.close()
-
-            # Earlier versions did not have the full paths in cache.pck
-            for url, (fn, x, y) in cache.items():
-                if not os.path.isabs(fn):
-                    cache[url] = (self.in_cache_dir(fn), x, y)
-
-            # If any files are deleted, drop them from the cache
-            for url, (fn, _, _) in cache.items():
-                if not os.path.exists(fn):
-                    del cache[url]
-
-            self.cache = cache
-
-        def remove_stale_files(self):
-            """
-            Remove files from the cache directory that are not listed in
-            cache.pck.
-            """
-            # TODO: remove empty subdirectories
-            listed = set(fn for (_, (fn, _, _)) in self.cache.items())
-            existing = reduce(set.union,
-                (set(os.path.join(dirpath, fn) for fn in filenames)
-                    for (dirpath, _, filenames) in os.walk(self.cache_dir)))
-            matplotlib.verbose.report(
-                'ViewVCCachedServer: files listed in cache.pck: %s' % listed,
-                'debug')
-            matplotlib.verbose.report(
-                'ViewVCCachedServer: files in cache directory: %s' % existing,
-                'debug')
-
-            for path in existing - listed - \
-                    set([self.in_cache_dir('cache.pck')]):
-                matplotlib.verbose.report(
-                    'ViewVCCachedServer:remove_stale_files: removing %s'%path,
-                    level='debug')
-                os.remove(path)
-
-        def write_cache(self):
-            """
-            Write the cache data structure into the cache directory.
-            """
-            fn = self.in_cache_dir('cache.pck')
-            f = open(fn, 'wb')
-            cPickle.dump(self.cache, f, -1)
-            f.close()
-
-        def cache_file(self, url, data, headers):
-            """
-            Store a received file in the cache directory.
-            """
-            # Pick a filename
-            fn = url[len(self.baseurl):]
-            fullpath = self.in_cache_dir(fn)
-
-            f = open(fullpath, 'wb')
-            f.write(data)
-            f.close()
-
-            # Update the cache
-            self.cache[url] = (fullpath, headers.get('ETag'),
-                               headers.get('Last-Modified'))
-            self.write_cache()
-
-        # These urllib2 entry points are used:
-        # http_request for preprocessing requests
-        # http_error_304 for handling 304 Not Modified responses
-        # http_response for postprocessing requests
-
-        def https_request(self, req):
-            """
-            Make the request conditional if we have a cached file.
-            """
-            url = req.get_full_url()
-            if url in self.cache:
-                _, etag, lastmod = self.cache[url]
-                if etag is not None:
-                    req.add_header("If-None-Match", etag)
-                if lastmod is not None:
-                    req.add_header("If-Modified-Since", lastmod)
-            matplotlib.verbose.report(
-                "ViewVCCachedServer: request headers %s" % req.header_items(),
-                "debug")
-            return req
-
-        def https_error_304(self, req, fp, code, msg, hdrs):
-            """
-            Read the file from the cache since the server has no newer version.
-            """
-            url = req.get_full_url()
-            fn, _, _ = self.cache[url]
-            matplotlib.verbose.report(
-                'ViewVCCachedServer: reading data file from cache file "%s"'
-                %fn, 'debug')
-            file = open(fn, 'rb')
-            handle = urllib2.addinfourl(file, hdrs, url)
-            handle.code = 304
-            return handle
-
-        def https_response(self, req, response):
-            """
-            Update the cache with the returned file.
-            """
-            matplotlib.verbose.report(
-                'ViewVCCachedServer: received response %d: %s'
-                % (response.code, response.msg), 'debug')
-            if response.code != 200:
-                return response
-            else:
-                data = response.read()
-                self.cache_file(req.get_full_url(), data, response.headers)
-                result = urllib2.addinfourl(StringIO.StringIO(data),
-                                            response.headers,
-                                            req.get_full_url())
-                result.code = response.code
-                result.msg = response.msg
-                return result
-
-        def get_sample_data(self, fname, asfileobj=True):
-            """
-            Check the cachedirectory for a sample_data file.  If it does
-            not exist, fetch it with urllib from the git repo and
-            store it in the cachedir.
-
-            If asfileobj is True, a file object will be returned.  Else the
-            path to the file as a string will be returned.
-            """
-            # TODO: time out if the connection takes forever
-            # (may not be possible with urllib2 only - spawn a helper process?)
-
-            # quote is not in python2.4, so check for it and get it from
-            # urllib if it is not available
-            quote = getattr(urllib2, 'quote', None)
-            if quote is None:
-                import urllib
-                quote = urllib.quote
-
-            # retrieve the URL for the side effect of refreshing the cache
-            url = self.baseurl + quote(fname)
-            error = 'unknown error'
-            matplotlib.verbose.report('ViewVCCachedServer: retrieving %s'
-                                      % url, 'debug')
-            try:
-                response = self.opener.open(url)
-            except urllib2.URLError, e:
-                # could be a missing network connection
-                error = str(e)
-
-            cached = self.cache.get(url)
-            if cached is None:
-                msg = 'file %s not in cache; received %s when trying to '\
-                      'retrieve' % (fname, error)
-                raise KeyError(msg)
-
-            fname = cached[0]
-
-            if asfileobj:
-                if (os.path.splitext(fname)[-1].lower() in
-                       ('.csv', '.xrc', '.txt')):
-                    mode = 'r'
-                else:
-                    mode = 'rb'
-                return open(fname, mode)
-            else:
-                return fname
-
-    return ViewVCCachedServer(cache_dir, baseurl)
+def _string_to_bool(s):
+    if not is_string_like(s):
+        return s
+    if s == 'on':
+        return True
+    if s == 'off':
+        return False
+    raise ValueError("string argument must be either 'on' or 'off'")
 
 
 def get_sample_data(fname, asfileobj=True):
     """
-    Check the cachedirectory ~/.matplotlib/sample_data for a sample_data
-    file.  If it does not exist, fetch it with urllib from the mpl git repo
+    Return a sample data file.  *fname* is a path relative to the
+    `mpl-data/sample_data` directory.  If *asfileobj* is `True`
+    return a file object, otherwise just a file path.
 
-      https://raw.github.com/matplotlib/sample_data/master
+    Set the rc parameter examples.directory to the directory where we should
+    look, if sample_data files are stored in a location different than
+    default (which is 'mpl-data/sample_data` at the same level of 'matplotlib`
+    Python module files).
 
-    and store it in the cachedir.
-
-    If asfileobj is True, a file object will be returned.  Else the
-    path to the file as a string will be returned
-
-    To add a datafile to this directory, you need to check out
-    sample_data from matplotlib git::
-
-      git clone git@github.com:matplotlib/sample_data
-
-    and git add the data file you want to support.  This is primarily
-    intended for use in mpl examples that need custom data.
-
-    To bypass all downloading, set the rc parameter examples.download to False
-    and examples.directory to the directory where we should look.
+    If the filename ends in .gz, the file is implicitly ungzipped.
     """
+    import matplotlib
 
-    if not matplotlib.rcParams['examples.download']:
-        directory = matplotlib.rcParams['examples.directory']
-        f = os.path.join(directory, fname)
-        if asfileobj:
-            return open(f, 'rb')
+    if matplotlib.rcParams['examples.directory']:
+        root = matplotlib.rcParams['examples.directory']
+    else:
+        root = os.path.join(os.path.dirname(__file__),
+                            "mpl-data", "sample_data")
+    path = os.path.join(root, fname)
+
+    if asfileobj:
+        if (os.path.splitext(fname)[-1].lower() in
+                ('.csv', '.xrc', '.txt')):
+            mode = 'r'
         else:
-            return f
+            mode = 'rb'
 
-    myserver = get_sample_data.myserver
-    if myserver is None:
-        configdir = matplotlib.get_configdir()
-        cachedir = os.path.join(configdir, 'sample_data')
-        baseurl = 'https://raw.github.com/matplotlib/sample_data/master/'
-        try:
-            myserver = _get_data_server(cachedir, baseurl)
-            get_sample_data.myserver = myserver
-        except ImportError:
-            raise ImportError(
-                'Python must be built with SSL support to fetch sample data '
-                'from the matplotlib repository')
+        base, ext = os.path.splitext(fname)
+        if ext == '.gz':
+            return gzip.open(path, mode)
+        else:
+            return open(path, mode)
+    else:
+        return path
 
-    return myserver.get_sample_data(fname, asfileobj=asfileobj)
-
-get_sample_data.myserver = None
 
 def flatten(seq, scalarp=is_scalar_or_string):
     """
-    this generator flattens nested containers such as
+    Returns a generator of flattened nested containers
 
-    >>> l=( ('John', 'Hunter'), (1,23), [[[[42,(5,23)]]]])
+    For example:
 
-    so that
-
-    >>> for i in flatten(l): print i,
-    John Hunter 1 23 42 5 23
+        >>> from matplotlib.cbook import flatten
+        >>> l = (('John', ['Hunter']), (1, 23), [[([42, (5, 23)], )]])
+        >>> print(list(flatten(l)))
+        ['John', 'Hunter', 1, 23, 42, 5, 23]
 
     By: Composite of Holger Krekel and Luther Blissett
     From: http://aspn.activestate.com/ASPN/Cookbook/Python/Recipe/121294
     and Recipe 1.12 in cookbook
     """
     for item in seq:
-        if scalarp(item): yield item
+        if scalarp(item):
+            yield item
         else:
             for subitem in flatten(item, scalarp):
                 yield subitem
 
 
-
-class Sorter:
+class Sorter(object):
     """
-
     Sort by attribute or item
 
     Example usage::
@@ -746,7 +887,8 @@ class Sorter:
     def _helper(self, data, aux, inplace):
         aux.sort()
         result = [data[i] for junk, i in aux]
-        if inplace: data[:] = result
+        if inplace:
+            data[:] = result
         return result
 
     def byItem(self, data, itemindex=None, inplace=1):
@@ -763,15 +905,12 @@ class Sorter:
             return self._helper(data, aux, inplace)
 
     def byAttribute(self, data, attributename, inplace=1):
-        aux = [(getattr(data[i],attributename),i) for i in range(len(data))]
+        aux = [(getattr(data[i], attributename), i) for i in range(len(data))]
         return self._helper(data, aux, inplace)
 
     # a couple of handy synonyms
     sort = byItem
     __call__ = byItem
-
-
-
 
 
 class Xlator(dict):
@@ -795,7 +934,7 @@ class Xlator(dict):
 
     def _make_regex(self):
         """ Build re object based on the keys of the current dictionary """
-        return re.compile("|".join(map(re.escape, self.keys())))
+        return re.compile("|".join(map(re.escape, list(six.iterkeys(self)))))
 
     def __call__(self, match):
         """ Handler invoked for each regex *match* """
@@ -804,7 +943,6 @@ class Xlator(dict):
     def xlat(self, text):
         """ Translate *text*, returns the modified text. """
         return self._make_regex().sub(self, text)
-
 
 
 def soundex(name, len=4):
@@ -818,8 +956,9 @@ def soundex(name, len=4):
     # Translate letters in name to soundex digits
     for c in name.upper():
         if c.isalpha():
-            if not fc: fc = c   # Remember first letter
-            d = soundex_digits[ord(c)-ord('A')]
+            if not fc:
+                fc = c   # Remember first letter
+            d = soundex_digits[ord(c) - ord('A')]
             # Duplicate consecutive soundex digits are skipped
             if not sndx or (d != sndx[-1]):
                 sndx += d
@@ -834,45 +973,57 @@ def soundex(name, len=4):
     return (sndx + (len * '0'))[:len]
 
 
-
-class Null:
+class Null(object):
     """ Null objects always and reliably "do nothing." """
 
-    def __init__(self, *args, **kwargs): pass
-    def __call__(self, *args, **kwargs): return self
-    def __str__(self): return "Null()"
-    def __repr__(self): return "Null()"
-    def __nonzero__(self): return 0
+    def __init__(self, *args, **kwargs):
+        pass
 
-    def __getattr__(self, name): return self
-    def __setattr__(self, name, value): return self
-    def __delattr__(self, name): return self
+    def __call__(self, *args, **kwargs):
+        return self
+
+    def __str__(self):
+        return "Null()"
+
+    def __repr__(self):
+        return "Null()"
+
+    if six.PY3:
+        def __bool__(self):
+            return 0
+    else:
+        def __nonzero__(self):
+            return 0
+
+    def __getattr__(self, name):
+        return self
+
+    def __setattr__(self, name, value):
+        return self
+
+    def __delattr__(self, name):
+        return self
 
 
-
-
-def mkdirs(newdir, mode=0777):
+def mkdirs(newdir, mode=0o777):
     """
     make directory *newdir* recursively, and set *mode*.  Equivalent to ::
 
         > mkdir -p NEWDIR
         > chmod MODE NEWDIR
     """
-    try:
-        if not os.path.exists(newdir):
-            parts = os.path.split(newdir)
-            for i in range(1, len(parts)+1):
-                thispart = os.path.join(*parts[:i])
-                if not os.path.exists(thispart):
-                    os.makedirs(thispart, mode)
+    # this functionality is now in core python as of 3.2
+    # LPY DROP
+    if six.PY3:
+        os.makedirs(newdir, mode=mode, exist_ok=True)
+    else:
+        try:
+            os.makedirs(newdir, mode=mode)
+        except OSError as exception:
+            if exception.errno != errno.EEXIST:
+                raise
 
-    except OSError, err:
-        # Reraise the error unless it's about an already existing directory
-        if err.errno != errno.EEXIST or not os.path.isdir(newdir):
-            raise
-
-
-class GetRealpathAndStat:
+class GetRealpathAndStat(object):
     def __init__(self):
         self._cache = {}
 
@@ -890,16 +1041,19 @@ class GetRealpathAndStat:
         return result
 get_realpath_and_stat = GetRealpathAndStat()
 
+
 def dict_delall(d, keys):
     'delete all of the *keys* from the :class:`dict` *d*'
     for key in keys:
-        try: del d[key]
-        except KeyError: pass
+        try:
+            del d[key]
+        except KeyError:
+            pass
 
 
-class RingBuffer:
+class RingBuffer(object):
     """ class that implements a not-yet-full buffer """
-    def __init__(self,size_max):
+    def __init__(self, size_max):
         self.max = size_max
         self.data = []
 
@@ -908,12 +1062,13 @@ class RingBuffer:
         def append(self, x):
             """ Append an element overwriting the oldest one. """
             self.data[self.cur] = x
-            self.cur = (self.cur+1) % self.max
+            self.cur = (self.cur + 1) % self.max
+
         def get(self):
             """ return list of elements in correct order """
-            return self.data[self.cur:]+self.data[:self.cur]
+            return self.data[self.cur:] + self.data[:self.cur]
 
-    def append(self,x):
+    def append(self, x):
         """append an element at the end of the buffer"""
         self.data.append(x)
         if len(self.data) == self.max:
@@ -929,7 +1084,6 @@ class RingBuffer:
         return self.data[i % len(self.data)]
 
 
-
 def get_split_ind(seq, N):
     """
     *seq* is a list of words.  Return the index into seq such that::
@@ -941,22 +1095,23 @@ def get_split_ind(seq, N):
 
     sLen = 0
     # todo: use Alex's xrange pattern from the cbook for efficiency
-    for (word, ind) in zip(seq, range(len(seq))):
+    for (word, ind) in zip(seq, xrange(len(seq))):
         sLen += len(word) + 1  # +1 to account for the len(' ')
-        if sLen>=N: return ind
+        if sLen >= N:
+            return ind
     return len(seq)
 
 
 def wrap(prefix, text, cols):
     'wrap *text* with *prefix* at length *cols*'
-    pad = ' '*len(prefix.expandtabs())
+    pad = ' ' * len(prefix.expandtabs())
     available = cols - len(pad)
 
     seq = text.split(' ')
     Nseq = len(seq)
     ind = 0
     lines = []
-    while ind<Nseq:
+    while ind < Nseq:
         lastInd = ind
         ind += get_split_ind(seq[ind:], available)
         lines.append(seq[lastInd:ind])
@@ -973,6 +1128,8 @@ def wrap(prefix, text, cols):
 _find_dedent_regex = re.compile("(?:(?:\n\r?)|^)( *)\S")
 # A cache to hold the regexs that actually remove the indent.
 _dedent_regex = {}
+
+
 def dedent(s):
     """
     Remove excess indentation from docstring *s*.
@@ -1019,30 +1176,27 @@ def listFiles(root, patterns='*', recurse=1, return_folders=0):
 
     from Parmar and Martelli in the Python Cookbook
     """
-    import os.path, fnmatch
+    import os.path
+    import fnmatch
     # Expand patterns from semicolon-separated string to list
     pattern_list = patterns.split(';')
-    # Collect input and output arguments into one bunch
-    class Bunch:
-        def __init__(self, **kwds): self.__dict__.update(kwds)
-    arg = Bunch(recurse=recurse, pattern_list=pattern_list,
-        return_folders=return_folders, results=[])
+    results = []
 
-    def visit(arg, dirname, files):
-        # Append to arg.results all relevant files (and perhaps folders)
+    for dirname, dirs, files in os.walk(root):
+        # Append to results all relevant files (and perhaps folders)
         for name in files:
             fullname = os.path.normpath(os.path.join(dirname, name))
-            if arg.return_folders or os.path.isfile(fullname):
-                for pattern in arg.pattern_list:
+            if return_folders or os.path.isfile(fullname):
+                for pattern in pattern_list:
                     if fnmatch.fnmatch(name, pattern):
-                        arg.results.append(fullname)
+                        results.append(fullname)
                         break
         # Block recursion if recursion was disallowed
-        if not arg.recurse: files[:]=[]
+        if not recurse:
+            break
 
-    os.path.walk(root, visit, arg)
+    return results
 
-    return arg.results
 
 def get_recursive_filelist(args):
     """
@@ -1062,20 +1216,24 @@ def get_recursive_filelist(args):
     return [f for f in files if not os.path.islink(f)]
 
 
-
 def pieces(seq, num=2):
     "Break up the *seq* into *num* tuples"
     start = 0
     while 1:
-        item = seq[start:start+num]
-        if not len(item): break
+        item = seq[start:start + num]
+        if not len(item):
+            break
         yield item
         start += num
 
-def exception_to_str(s = None):
 
-    sh = StringIO.StringIO()
-    if s is not None: print >>sh, s
+def exception_to_str(s=None):
+    if six.PY3:
+        sh = io.StringIO()
+    else:
+        sh = io.BytesIO()
+    if s is not None:
+        print(s, file=sh)
     traceback.print_exc(file=sh)
     return sh.getvalue()
 
@@ -1085,32 +1243,41 @@ def allequal(seq):
     Return *True* if all elements of *seq* compare equal.  If *seq* is
     0 or 1 length, return *True*
     """
-    if len(seq)<2: return True
+    if len(seq) < 2:
+        return True
     val = seq[0]
     for i in xrange(1, len(seq)):
         thisval = seq[i]
-        if thisval != val: return False
+        if thisval != val:
+            return False
     return True
+
 
 def alltrue(seq):
     """
     Return *True* if all elements of *seq* evaluate to *True*.  If
     *seq* is empty, return *False*.
     """
-    if not len(seq): return False
+    if not len(seq):
+        return False
     for val in seq:
-        if not val: return False
+        if not val:
+            return False
     return True
+
 
 def onetrue(seq):
     """
     Return *True* if one element of *seq* is *True*.  It *seq* is
     empty, return *False*.
     """
-    if not len(seq): return False
+    if not len(seq):
+        return False
     for val in seq:
-        if val: return True
+        if val:
+            return True
     return False
+
 
 def allpairs(x):
     """
@@ -1120,8 +1287,7 @@ def allpairs(x):
 
     .. _thread: http://groups.google.com/groups?q=all+pairs+group:*python*&hl=en&lr=&ie=UTF-8&selm=mailman.4028.1096403649.5135.python-list%40python.org&rnum=1
     """
-    return [ (s, f) for i, f in enumerate(x) for s in x[i+1:] ]
-
+    return [(s, f) for i, f in enumerate(x) for s in x[i + 1:]]
 
 
 class maxdict(dict):
@@ -1134,14 +1300,14 @@ class maxdict(dict):
         dict.__init__(self)
         self.maxsize = maxsize
         self._killkeys = []
+
     def __setitem__(self, k, v):
         if k not in self:
-            if len(self)>=self.maxsize:
+            if len(self) >= self.maxsize:
                 del self[self._killkeys[0]]
                 del self._killkeys[0]
             self._killkeys.append(k)
         dict.__setitem__(self, k, v)
-
 
 
 class Stack(object):
@@ -1157,8 +1323,10 @@ class Stack(object):
 
     def __call__(self):
         'return the current element, or None'
-        if not len(self._elements): return self._default
-        else: return self._elements[self._pos]
+        if not len(self._elements):
+            return self._default
+        else:
+            return self._elements[self._pos]
 
     def __len__(self):
         return self._elements.__len__()
@@ -1169,12 +1337,14 @@ class Stack(object):
     def forward(self):
         'move the position forward and return the current element'
         N = len(self._elements)
-        if self._pos<N-1: self._pos += 1
+        if self._pos < N - 1:
+            self._pos += 1
         return self()
 
     def back(self):
         'move the position back and return the current element'
-        if self._pos>0: self._pos -= 1
+        if self._pos > 0:
+            self._pos -= 1
         return self()
 
     def push(self, o):
@@ -1182,19 +1352,20 @@ class Stack(object):
         push object onto stack at current position - all elements
         occurring later than the current position are discarded
         """
-        self._elements = self._elements[:self._pos+1]
+        self._elements = self._elements[:self._pos + 1]
         self._elements.append(o)
-        self._pos = len(self._elements)-1
+        self._pos = len(self._elements) - 1
         return self()
 
     def home(self):
         'push the first element onto the top of the stack'
-        if not len(self._elements): return
+        if not len(self._elements):
+            return
         self.push(self._elements[0])
         return self()
 
     def empty(self):
-        return len(self._elements)==0
+        return len(self._elements) == 0
 
     def clear(self):
         'empty the stack'
@@ -1213,8 +1384,10 @@ class Stack(object):
         self.clear()
         bubbles = []
         for thiso in old:
-            if thiso==o: bubbles.append(thiso)
-            else: self.push(thiso)
+            if thiso == o:
+                bubbles.append(thiso)
+            else:
+                self.push(thiso)
         for thiso in bubbles:
             self.push(o)
         return o
@@ -1226,12 +1399,17 @@ class Stack(object):
         old = self._elements[:]
         self.clear()
         for thiso in old:
-            if thiso==o: continue
-            else: self.push(thiso)
+            if thiso == o:
+                continue
+            else:
+                self.push(thiso)
+
 
 def popall(seq):
     'empty a list'
-    for i in xrange(len(seq)): seq.pop()
+    for i in xrange(len(seq)):
+        seq.pop()
+
 
 def finddir(o, match, case=False):
     """
@@ -1239,61 +1417,83 @@ def finddir(o, match, case=False):
     is True require an exact case match.
     """
     if case:
-        names = [(name,name) for name in dir(o) if is_string_like(name)]
+        names = [(name, name) for name in dir(o) if is_string_like(name)]
     else:
-        names = [(name.lower(), name) for name in dir(o) if is_string_like(name)]
+        names = [(name.lower(), name) for name in dir(o)
+                 if is_string_like(name)]
         match = match.lower()
-    return [orig for name, orig in names if name.find(match)>=0]
+    return [orig for name, orig in names if name.find(match) >= 0]
+
 
 def reverse_dict(d):
     'reverse the dictionary -- may lose data if values are not unique!'
-    return dict([(v,k) for k,v in d.items()])
+    return dict([(v, k) for k, v in six.iteritems(d)])
+
 
 def restrict_dict(d, keys):
     """
     Return a dictionary that contains those keys that appear in both
     d and keys, with values from d.
     """
-    return dict([(k,v) for (k,v) in d.iteritems() if k in keys])
+    return dict([(k, v) for (k, v) in six.iteritems(d) if k in keys])
+
 
 def report_memory(i=0):  # argument may go away
     'return the memory consumed by process'
-    from subprocess import Popen, PIPE
+    from matplotlib.compat.subprocess import Popen, PIPE
     pid = os.getpid()
-    if sys.platform=='sunos5':
-        a2 = Popen('ps -p %d -o osz' % pid, shell=True,
-            stdout=PIPE).stdout.readlines()
+    if sys.platform == 'sunos5':
+        try:
+            a2 = Popen('ps -p %d -o osz' % pid, shell=True,
+                       stdout=PIPE).stdout.readlines()
+        except OSError:
+            raise NotImplementedError(
+                "report_memory works on Sun OS only if "
+                "the 'ps' program is found")
         mem = int(a2[-1].strip())
     elif sys.platform.startswith('linux'):
-        a2 = Popen('ps -p %d -o rss,sz' % pid, shell=True,
-            stdout=PIPE).stdout.readlines()
+        try:
+            a2 = Popen('ps -p %d -o rss,sz' % pid, shell=True,
+                       stdout=PIPE).stdout.readlines()
+        except OSError:
+            raise NotImplementedError(
+                "report_memory works on Linux only if "
+                "the 'ps' program is found")
         mem = int(a2[1].split()[1])
     elif sys.platform.startswith('darwin'):
-        a2 = Popen('ps -p %d -o rss,vsz' % pid, shell=True,
-            stdout=PIPE).stdout.readlines()
+        try:
+            a2 = Popen('ps -p %d -o rss,vsz' % pid, shell=True,
+                       stdout=PIPE).stdout.readlines()
+        except OSError:
+            raise NotImplementedError(
+                "report_memory works on Mac OS only if "
+                "the 'ps' program is found")
         mem = int(a2[1].split()[0])
     elif sys.platform.startswith('win'):
         try:
             a2 = Popen(["tasklist", "/nh", "/fi", "pid eq %d" % pid],
-                stdout=PIPE).stdout.read()
+                       stdout=PIPE).stdout.read()
         except OSError:
             raise NotImplementedError(
                 "report_memory works on Windows only if "
                 "the 'tasklist' program is found")
-        mem = int(a2.strip().split()[-2].replace(',',''))
+        mem = int(a2.strip().split()[-2].replace(',', ''))
     else:
         raise NotImplementedError(
-                "We don't have a memory monitor for %s" % sys.platform)
+            "We don't have a memory monitor for %s" % sys.platform)
     return mem
 
 _safezip_msg = 'In safezip, len(args[0])=%d but len(args[%d])=%d'
+
+
 def safezip(*args):
     'make sure *args* are equal len before zipping'
     Nx = len(args[0])
     for i, arg in enumerate(args[1:]):
         if len(arg) != Nx:
-            raise ValueError(_safezip_msg % (Nx, i+1, len(arg)))
-    return zip(*args)
+            raise ValueError(_safezip_msg % (Nx, i + 1, len(arg)))
+    return list(zip(*args))
+
 
 def issubclass_safe(x, klass):
     'return issubclass(x, klass) and return False on a TypeError'
@@ -1302,6 +1502,7 @@ def issubclass_safe(x, klass):
         return issubclass(x, klass)
     except TypeError:
         return False
+
 
 def safe_masked_invalid(x):
     x = np.asanyarray(x)
@@ -1312,7 +1513,8 @@ def safe_masked_invalid(x):
         return x
     return xm
 
-class MemoryMonitor:
+
+class MemoryMonitor(object):
     def __init__(self, nmax=20000):
         self._nmax = nmax
         self._mem = np.zeros((self._nmax,), np.int32)
@@ -1334,21 +1536,21 @@ class MemoryMonitor:
     def report(self, segments=4):
         n = self._n
         segments = min(n, segments)
-        dn = int(n/segments)
-        ii = range(0, n, dn)
-        ii[-1] = n-1
-        print
-        print 'memory report: i, mem, dmem, dmem/nloops'
-        print 0, self._mem[0]
+        dn = int(n / segments)
+        ii = list(xrange(0, n, dn))
+        ii[-1] = n - 1
+        print()
+        print('memory report: i, mem, dmem, dmem/nloops')
+        print(0, self._mem[0])
         for i in range(1, len(ii)):
-            di = ii[i] - ii[i-1]
+            di = ii[i] - ii[i - 1]
             if di == 0:
                 continue
-            dm = self._mem[ii[i]] - self._mem[ii[i-1]]
-            print '%5d %5d %3d %8.3f' % (ii[i], self._mem[ii[i]],
-                                            dm, dm / float(di))
+            dm = self._mem[ii[i]] - self._mem[ii[i - 1]]
+            print('%5d %5d %3d %8.3f' % (ii[i], self._mem[ii[i]],
+                                         dm, dm / float(di)))
         if self._overflow:
-            print "Warning: array size was too small for the number of calls."
+            print("Warning: array size was too small for the number of calls.")
 
     def xy(self, i0=0, isub=1):
         x = np.arange(i0, self._n, isub)
@@ -1356,7 +1558,7 @@ class MemoryMonitor:
 
     def plot(self, i0=0, isub=1, fig=None):
         if fig is None:
-            from pylab import figure, show
+            from .pylab import figure
             fig = figure()
 
         ax = fig.add_subplot(111)
@@ -1387,7 +1589,7 @@ def print_cycles(objects, outstream=sys.stdout, show_progress=False):
 
             outstream.write("   %s -- " % str(type(step)))
             if isinstance(step, dict):
-                for key, val in step.items():
+                for key, val in six.iteritems(step):
                     if val is next:
                         outstream.write("[%s]" % repr(key))
                         break
@@ -1428,7 +1630,8 @@ def print_cycles(objects, outstream=sys.stdout, show_progress=False):
 
     for obj in objects:
         outstream.write("Examining: %r\n" % (obj,))
-        recurse(obj, obj, { }, [])
+        recurse(obj, obj, {}, [])
+
 
 class Grouper(object):
     """
@@ -1444,25 +1647,27 @@ class Grouper(object):
 
     For example:
 
-    >>> class Foo:
-    ...     def __init__(self, s):
-    ...             self.s = s
-    ...     def __repr__(self):
-    ...             return self.s
-    ...
-    >>> a, b, c, d, e, f = [Foo(x) for x in 'abcdef']
-    >>> g = Grouper()
-    >>> g.join(a, b)
-    >>> g.join(b, c)
-    >>> g.join(d, e)
-    >>> list(g)
-    [[d, e], [a, b, c]]
-    >>> g.joined(a, b)
-    True
-    >>> g.joined(a, c)
-    True
-    >>> g.joined(a, d)
-    False
+        >>> from matplotlib.cbook import Grouper
+        >>> class Foo(object):
+        ...     def __init__(self, s):
+        ...         self.s = s
+        ...     def __repr__(self):
+        ...         return self.s
+        ...
+        >>> a, b, c, d, e, f = [Foo(x) for x in 'abcdef']
+        >>> grp = Grouper()
+        >>> grp.join(a, b)
+        >>> grp.join(b, c)
+        >>> grp.join(d, e)
+        >>> sorted(map(tuple, grp))
+        [(a, b, c), (d, e)]
+        >>> grp.joined(a, b)
+        True
+        >>> grp.joined(a, c)
+        True
+        >>> grp.joined(a, d)
+        False
+
     """
     def __init__(self, init=[]):
         mapping = self._mapping = {}
@@ -1477,10 +1682,10 @@ class Grouper(object):
         Clean dead weak references from the dictionary
         """
         mapping = self._mapping
-        for key, val in mapping.items():
-            if key() is None:
-                del mapping[key]
-                val.remove(key)
+        to_drop = [key for key in mapping if key() is None]
+        for key in to_drop:
+            val = mapping.pop(key)
+            val.remove(key)
 
     def join(self, a, *args):
         """
@@ -1524,18 +1729,19 @@ class Grouper(object):
         """
         self.clean()
 
-        class Token: pass
+        class Token:
+            pass
         token = Token()
 
         # Mark each group as we come across if by appending a token,
         # and don't yield it twice
-        for group in self._mapping.itervalues():
+        for group in six.itervalues(self._mapping):
             if not group[-1] is token:
                 yield [x() for x in group]
                 group.append(token)
 
         # Cleanup the tokens
-        for group in self._mapping.itervalues():
+        for group in six.itervalues(self._mapping):
             if group[-1] is token:
                 del group[-1]
 
@@ -1553,7 +1759,7 @@ def simple_linear_interpolation(a, steps):
     if steps == 1:
         return a
 
-    steps = np.floor(steps)
+    steps = int(np.floor(steps))
     new_length = ((len(a) - 1) * steps) + 1
     new_shape = list(a.shape)
     new_shape[0] = new_length
@@ -1561,18 +1767,19 @@ def simple_linear_interpolation(a, steps):
 
     result[0] = a[0]
     a0 = a[0:-1]
-    a1 = a[1:  ]
+    a1 = a[1:]
     delta = ((a1 - a0) / steps)
-
-    for i in range(1, int(steps)):
+    for i in range(1, steps):
         result[i::steps] = delta * i + a0
     result[steps::steps] = a1
 
     return result
 
+
 def recursive_remove(path):
     if os.path.isdir(path):
-        for fname in glob.glob(os.path.join(path, '*')) + glob.glob(os.path.join(path, '.*')):
+        for fname in (glob.glob(os.path.join(path, '*')) +
+                      glob.glob(os.path.join(path, '.*'))):
             if os.path.isdir(fname):
                 recursive_remove(fname)
                 os.removedirs(fname)
@@ -1581,6 +1788,7 @@ def recursive_remove(path):
         #os.removedirs(path)
     else:
         os.remove(path)
+
 
 def delete_masked_points(*args):
     """
@@ -1644,7 +1852,7 @@ def delete_masked_points(*args):
                 mask = np.isfinite(xd)
                 if isinstance(mask, np.ndarray):
                     masks.append(mask)
-            except: #Fixme: put in tuple of possible exceptions?
+            except:  # Fixme: put in tuple of possible exceptions?
                 pass
     if len(masks):
         mask = reduce(np.logical_and, masks)
@@ -1658,8 +1866,209 @@ def delete_masked_points(*args):
             margs[i] = x.filled()
     return margs
 
-def unmasked_index_ranges(mask, compressed = True):
+
+def boxplot_stats(X, whis=1.5, bootstrap=None, labels=None):
     '''
+    Returns list of dictionaries of staticists to be use to draw a series of
+    box and whisker plots. See the `Returns` section below to the required
+    keys of the dictionary. Users can skip this function and pass a user-
+    defined set of dictionaries to the new `axes.bxp` method instead of
+    relying on MPL to do the calcs.
+
+    Parameters
+    ----------
+    X : array-like
+        Data that will be represented in the boxplots. Should have 2 or fewer
+        dimensions.
+
+    whis : float, string, or sequence (default = 1.5)
+        As a float, determines the reach of the whiskers past the first and
+        third quartiles (e.g., Q3 + whis*IQR, QR = interquartile range, Q3-Q1).
+        Beyond the whiskers, data are considered outliers and are plotted as
+        individual points. Set this to an unreasonably high value to force the
+        whiskers to show the min and max data. Alternatively, set this to an
+        ascending sequence of percentile (e.g., [5, 95]) to set the whiskers
+        at specific percentiles of the data. Finally, can  `whis` be the
+        string 'range' to force the whiskers to the min and max of the data.
+        In the edge case that the 25th and 75th percentiles are equivalent,
+        `whis` will be automatically set to 'range'
+
+    bootstrap : int or None (default)
+        Number of times the confidence intervals around the median should
+        be bootstrapped (percentile method).
+
+    labels : sequence
+        Labels for each dataset. Length must be compatible with dimensions
+        of `X`
+
+    Returns
+    -------
+    bxpstats : list of dict
+        A list of dictionaries containing the results for each column
+        of data. Keys of each dictionary are the following:
+
+        ========   ===================================
+        Key        Value Description
+        ========   ===================================
+        label      tick label for the boxplot
+        mean       arithemetic mean value
+        med        50th percentile
+        q1         first quartile (25th percentile)
+        q3         third quartile (75th percentile)
+        cilo       lower notch around the median
+        cihi       upper notch around the median
+        whislo     end of the lower whisker
+        whishi     end of the upper whisker
+        fliers     outliers
+        ========   ===================================
+
+    Notes
+    -----
+    Non-bootstrapping approach to confidence interval uses Gaussian-based
+    asymptotic approximation:
+
+    .. math::
+
+        \mathrm{med} \pm 1.57 \\times \\frac{\mathrm{iqr}}{\sqrt{N}}
+
+    General approach from:
+    McGill, R., Tukey, J.W., and Larsen, W.A. (1978) "Variations of
+    Boxplots", The American Statistician, 32:12-16.
+
+    '''
+
+    def _bootstrap_median(data, N=5000):
+        # determine 95% confidence intervals of the median
+        M = len(data)
+        percentiles = [2.5, 97.5]
+
+        ii = np.random.randint(M, size=(N, M))
+        bsData = x[ii]
+        estimate = np.median(bsData, axis=1, overwrite_input=True)
+
+        CI = np.percentile(estimate, percentiles)
+        return CI
+
+    def _compute_conf_interval(data, med, iqr, bootstrap):
+        if bootstrap is not None:
+            # Do a bootstrap estimate of notch locations.
+            # get conf. intervals around median
+            CI = _bootstrap_median(data, N=bootstrap)
+            notch_min = CI[0]
+            notch_max = CI[1]
+        else:
+
+            N = len(data)
+            notch_min = med - 1.57 * iqr / np.sqrt(N)
+            notch_max = med + 1.57 * iqr / np.sqrt(N)
+
+        return notch_min, notch_max
+
+    # output is a list of dicts
+    bxpstats = []
+
+    # convert X to a list of lists
+    X = _reshape_2D(X)
+
+    ncols = len(X)
+    if labels is None:
+        labels = repeat(None)
+    elif len(labels) != ncols:
+        raise ValueError("Dimensions of labels and X must be compatible")
+
+    input_whis = whis
+    for ii, (x, label) in enumerate(zip(X, labels), start=0):
+
+        # empty dict
+        stats = {}
+        if label is not None:
+            stats['label'] = label
+
+        # restore whis to the input values in case it got changed in the loop
+        whis = input_whis
+
+        # note tricksyness, append up here and then mutate below
+        bxpstats.append(stats)
+
+        # if empty, bail
+        if len(x) == 0:
+            stats['fliers'] = np.array([])
+            stats['mean'] = np.nan
+            stats['med'] = np.nan
+            stats['q1'] = np.nan
+            stats['q3'] = np.nan
+            stats['cilo'] = np.nan
+            stats['cihi'] = np.nan
+            stats['whislo'] = np.nan
+            stats['whishi'] = np.nan
+            stats['med'] = np.nan
+            continue
+
+        # up-convert to an array, just to be safe
+        x = np.asarray(x)
+
+        # arithmetic mean
+        stats['mean'] = np.mean(x)
+
+        # medians and quartiles
+        q1, med, q3 = np.percentile(x, [25, 50, 75])
+
+        # interquartile range
+        stats['iqr'] = q3 - q1
+        if stats['iqr'] == 0:
+            whis = 'range'
+
+        # conf. interval around median
+        stats['cilo'], stats['cihi'] = _compute_conf_interval(
+            x, med, stats['iqr'], bootstrap
+        )
+
+        # lowest/highest non-outliers
+        if np.isscalar(whis):
+            if np.isreal(whis):
+                loval = q1 - whis * stats['iqr']
+                hival = q3 + whis * stats['iqr']
+            elif whis in ['range', 'limit', 'limits', 'min/max']:
+                loval = np.min(x)
+                hival = np.max(x)
+            else:
+                whismsg = ('whis must be a float, valid string, or '
+                           'list of percentiles')
+                raise ValueError(whismsg)
+        else:
+            loval = np.percentile(x, whis[0])
+            hival = np.percentile(x, whis[1])
+
+        # get high extreme
+        wiskhi = np.compress(x <= hival, x)
+        if len(wiskhi) == 0 or np.max(wiskhi) < q3:
+            stats['whishi'] = q3
+        else:
+            stats['whishi'] = np.max(wiskhi)
+
+        # get low extreme
+        wisklo = np.compress(x >= loval, x)
+        if len(wisklo) == 0 or np.min(wisklo) > q1:
+            stats['whislo'] = q1
+        else:
+            stats['whislo'] = np.min(wisklo)
+
+        # compute a single array of outliers
+        stats['fliers'] = np.hstack([
+            np.compress(x < stats['whislo'], x),
+            np.compress(x > stats['whishi'], x)
+        ])
+
+        # add in the remaining stats
+        stats['q1'], stats['med'], stats['q3'] = q1, med, q3
+
+
+    return bxpstats
+
+
+# FIXME I don't think this is used anywhere
+def unmasked_index_ranges(mask, compressed=True):
+    """
     Find index ranges where *mask* is *False*.
 
     *mask* will be flattened if it is not already 1-D.
@@ -1689,8 +2098,7 @@ def unmasked_index_ranges(mask, compressed = True):
 
     Prior to the transforms refactoring, this was used to support
     masked arrays in Line2D.
-
-    '''
+    """
     mask = mask.reshape(mask.size)
     m = np.concatenate(((1,), mask, (1,)))
     indices = np.arange(len(mask) + 1)
@@ -1710,89 +2118,23 @@ def unmasked_index_ranges(mask, compressed = True):
 
 # a dict to cross-map linestyle arguments
 _linestyles = [('-', 'solid'),
-    ('--', 'dashed'),
-    ('-.', 'dashdot'),
-    (':',  'dotted')]
+               ('--', 'dashed'),
+               ('-.', 'dashdot'),
+               (':', 'dotted')]
 
 ls_mapper = dict(_linestyles)
-ls_mapper.update([(ls[1], ls[0]) for ls in _linestyles])
+# The ls_mapper maps short codes for line style to their full name used
+# by backends
+# The reverse mapper is for mapping full names to short ones
+ls_mapper_r = dict([(ls[1], ls[0]) for ls in _linestyles])
 
-def less_simple_linear_interpolation( x, y, xi, extrap=False ):
-    """
-    This function has been moved to matplotlib.mlab -- please import
-    it from there
-    """
-    # deprecated from cbook in 0.98.4
-    warnings.warn('less_simple_linear_interpolation has been moved to matplotlib.mlab -- please import it from there', DeprecationWarning)
-    import matplotlib.mlab as mlab
-    return mlab.less_simple_linear_interpolation( x, y, xi, extrap=extrap )
-
-def isvector(X):
-    """
-    This function has been moved to matplotlib.mlab -- please import
-    it from there
-    """
-    # deprecated from cbook in 0.98.4
-    warnings.warn('isvector has been moved to matplotlib.mlab -- please import it from there', DeprecationWarning)
-    import matplotlib.mlab as mlab
-    return mlab.isvector( x, y, xi, extrap=extrap )
-
-def vector_lengths( X, P=2., axis=None ):
-    """
-    This function has been moved to matplotlib.mlab -- please import
-    it from there
-    """
-    # deprecated from cbook in 0.98.4
-    warnings.warn('vector_lengths has been moved to matplotlib.mlab -- please import it from there', DeprecationWarning)
-    import matplotlib.mlab as mlab
-    return mlab.vector_lengths( X, P=2., axis=axis )
-
-def distances_along_curve( X ):
-    """
-    This function has been moved to matplotlib.mlab -- please import
-    it from there
-    """
-    # deprecated from cbook in 0.98.4
-    warnings.warn('distances_along_curve has been moved to matplotlib.mlab -- please import it from there', DeprecationWarning)
-    import matplotlib.mlab as mlab
-    return mlab.distances_along_curve( X )
-
-def path_length(X):
-    """
-    This function has been moved to matplotlib.mlab -- please import
-    it from there
-    """
-    # deprecated from cbook in 0.98.4
-    warnings.warn('path_length has been moved to matplotlib.mlab -- please import it from there', DeprecationWarning)
-    import matplotlib.mlab as mlab
-    return mlab.path_length(X)
-
-def is_closed_polygon(X):
-    """
-    This function has been moved to matplotlib.mlab -- please import
-    it from there
-    """
-    # deprecated from cbook in 0.98.4
-    warnings.warn('is_closed_polygon has been moved to matplotlib.mlab -- please import it from there', DeprecationWarning)
-    import matplotlib.mlab as mlab
-    return mlab.is_closed_polygon(X)
-
-def quad2cubic(q0x, q0y, q1x, q1y, q2x, q2y):
-    """
-    This function has been moved to matplotlib.mlab -- please import
-    it from there
-    """
-    # deprecated from cbook in 0.98.4
-    warnings.warn('quad2cubic has been moved to matplotlib.mlab -- please import it from there', DeprecationWarning)
-    import matplotlib.mlab as mlab
-    return mlab.quad2cubic(q0x, q0y, q1x, q1y, q2x, q2y)
 
 def align_iterators(func, *iterables):
     """
     This generator takes a bunch of iterables that are ordered by func
-    It sends out ordered tuples:
+    It sends out ordered tuples::
 
-      (func(row), [rows from all iterators matching func(row)])
+       (func(row), [rows from all iterators matching func(row)])
 
     It is used by :func:`matplotlib.mlab.recs_join` to join record arrays
     """
@@ -1804,7 +2146,7 @@ def align_iterators(func, *iterables):
 
         def iternext(self):
             try:
-                self.value = self.it.next()
+                self.value = next(self.it)
                 self.key = func(self.value)
             except StopIteration:
                 self.value = self.key = None
@@ -1815,33 +2157,382 @@ def align_iterators(func, *iterables):
                 retval = self.value
                 self.iternext()
             elif self.key and key > self.key:
-                raise ValueError, "Iterator has been left behind"
+                raise ValueError("Iterator has been left behind")
             return retval
 
-    # This can be made more efficient by not computing the minimum key for each iteration
+    # This can be made more efficient by not computing the minimum key for each
+    # iteration
     iters = [myiter(it) for it in iterables]
     minvals = minkey = True
     while 1:
-        minvals = (filter(None, [it.key for it in iters]))
+        minvals = ([_f for _f in [it.key for it in iters] if _f])
         if minvals:
             minkey = min(minvals)
             yield (minkey, [it(minkey) for it in iters])
         else:
             break
 
+
 def is_math_text(s):
     # Did we find an even number of non-escaped dollar signs?
     # If so, treat is as math text.
     try:
-        s = unicode(s)
+        s = six.text_type(s)
     except UnicodeDecodeError:
         raise ValueError(
-            "matplotlib display text must have all code points < 128 or use Unicode strings")
+            "matplotlib display text must have all code points < 128 or use "
+            "Unicode strings")
 
     dollar_count = s.count(r'$') - s.count(r'\$')
     even_dollars = (dollar_count > 0 and dollar_count % 2 == 0)
 
     return even_dollars
+
+
+def _check_1d(x):
+    '''
+    Converts a sequence of less than 1 dimension, to an array of 1
+    dimension; leaves everything else untouched.
+    '''
+    if not hasattr(x, 'shape') or len(x.shape) < 1:
+        return np.atleast_1d(x)
+    else:
+        try:
+            x[:, None]
+            return x
+        except (IndexError, TypeError):
+            return np.atleast_1d(x)
+
+
+def _reshape_2D(X):
+    """
+    Converts a non-empty list or an ndarray of two or fewer dimensions
+    into a list of iterable objects so that in
+
+        for v in _reshape_2D(X):
+
+    v is iterable and can be used to instantiate a 1D array.
+    """
+    if hasattr(X, 'shape'):
+        # one item
+        if len(X.shape) == 1:
+            if hasattr(X[0], 'shape'):
+                X = list(X)
+            else:
+                X = [X, ]
+
+        # several items
+        elif len(X.shape) == 2:
+            nrows, ncols = X.shape
+            if nrows == 1:
+                X = [X]
+            elif ncols == 1:
+                X = [X.ravel()]
+            else:
+                X = [X[:, i] for i in xrange(ncols)]
+        else:
+            raise ValueError("input `X` must have 2 or fewer dimensions")
+
+    if not hasattr(X[0], '__len__'):
+        X = [X]
+    else:
+        X = [np.ravel(x) for x in X]
+
+    return X
+
+
+def violin_stats(X, method, points=100):
+    '''
+    Returns a list of dictionaries of data which can be used to draw a series
+    of violin plots. See the `Returns` section below to view the required keys
+    of the dictionary. Users can skip this function and pass a user-defined set
+    of dictionaries to the `axes.vplot` method instead of using MPL to do the
+    calculations.
+
+    Parameters
+    ----------
+    X : array-like
+        Sample data that will be used to produce the gaussian kernel density
+        estimates. Must have 2 or fewer dimensions.
+
+    method : callable
+        The method used to calculate the kernel density estimate for each
+        column of data. When called via `method(v, coords)`, it should
+        return a vector of the values of the KDE evaluated at the values
+        specified in coords.
+
+    points : scalar, default = 100
+        Defines the number of points to evaluate each of the gaussian kernel
+        density estimates at.
+
+    Returns
+    -------
+
+    A list of dictionaries containing the results for each column of data.
+    The dictionaries contain at least the following:
+
+        - coords: A list of scalars containing the coordinates this particular
+          kernel density estimate was evaluated at.
+        - vals: A list of scalars containing the values of the kernel density
+          estimate at each of the coordinates given in `coords`.
+        - mean: The mean value for this column of data.
+        - median: The median value for this column of data.
+        - min: The minimum value for this column of data.
+        - max: The maximum value for this column of data.
+    '''
+
+    # List of dictionaries describing each of the violins.
+    vpstats = []
+
+    # Want X to be a list of data sequences
+    X = _reshape_2D(X)
+
+    for x in X:
+        # Dictionary of results for this distribution
+        stats = {}
+
+        # Calculate basic stats for the distribution
+        min_val = np.min(x)
+        max_val = np.max(x)
+
+        # Evaluate the kernel density estimate
+        coords = np.linspace(min_val, max_val, points)
+        stats['vals'] = method(x, coords)
+        stats['coords'] = coords
+
+        # Store additional statistics for this distribution
+        stats['mean'] = np.mean(x)
+        stats['median'] = np.median(x)
+        stats['min'] = min_val
+        stats['max'] = max_val
+
+        # Append to output
+        vpstats.append(stats)
+
+    return vpstats
+
+
+class _NestedClassGetter(object):
+    # recipe from http://stackoverflow.com/a/11493777/741316
+    """
+    When called with the containing class as the first argument,
+    and the name of the nested class as the second argument,
+    returns an instance of the nested class.
+    """
+    def __call__(self, containing_class, class_name):
+        nested_class = getattr(containing_class, class_name)
+
+        # make an instance of a simple object (this one will do), for which we
+        # can change the __class__ later on.
+        nested_instance = _NestedClassGetter()
+
+        # set the class of the instance, the __init__ will never be called on
+        # the class but the original state will be set later on by pickle.
+        nested_instance.__class__ = nested_class
+        return nested_instance
+
+
+class _InstanceMethodPickler(object):
+    """
+    Pickle cannot handle instancemethod saving. _InstanceMethodPickler
+    provides a solution to this.
+    """
+    def __init__(self, instancemethod):
+        """Takes an instancemethod as its only argument."""
+        if six.PY3:
+            self.parent_obj = instancemethod.__self__
+            self.instancemethod_name = instancemethod.__func__.__name__
+        else:
+            self.parent_obj = instancemethod.im_self
+            self.instancemethod_name = instancemethod.im_func.__name__
+
+    def get_instancemethod(self):
+        return getattr(self.parent_obj, self.instancemethod_name)
+
+
+def _step_validation(x, *args):
+    """
+    Helper function of `pts_to_*step` functions
+
+    This function does all of the normalization required to the
+    input and generate the template for output
+
+
+    """
+    args = tuple(np.asanyarray(y) for y in args)
+    x = np.asanyarray(x)
+    if x.ndim != 1:
+        raise ValueError("x must be 1 dimenional")
+    if len(args) == 0:
+        raise ValueError("At least one Y value must be passed")
+
+    return np.vstack((x, ) + args)
+
+
+def pts_to_prestep(x, *args):
+    """
+    Covert continuous line to pre-steps
+
+    Given a set of N points convert to 2 N -1 points
+    which when connected linearly give a step function
+    which changes values at the begining the intervals.
+
+    Parameters
+    ----------
+    x : array
+        The x location of the steps
+
+    y1, y2, ... : array
+        Any number of y arrays to be turned into steps.
+        All must be the same length as ``x``
+
+    Returns
+    -------
+    x, y1, y2, .. : array
+        The x and y values converted to steps in the same order
+        as the input.  If the input is length ``N``, each of these arrays
+        will be length ``2N + 1``
+
+
+    Examples
+    --------
+    >> x_s, y1_s, y2_s = pts_to_prestep(x, y1, y2)
+    """
+    # do normalization
+    vertices = _step_validation(x, *args)
+    # create the output array
+    steps = np.zeros((vertices.shape[0], 2 * len(x) - 1), np.float)
+    # do the to step conversion logic
+    steps[0, 0::2], steps[0, 1::2] = vertices[0, :], vertices[0, :-1]
+    steps[1:, 0::2], steps[1:, 1:-1:2] = vertices[1:, :], vertices[1:, 1:]
+    # convert 2D array back to tuple
+    return tuple(steps)
+
+
+def pts_to_poststep(x, *args):
+    """
+    Covert continuous line to pre-steps
+
+    Given a set of N points convert to 2 N -1 points
+    which when connected linearly give a step function
+    which changes values at the begining the intervals.
+
+    Parameters
+    ----------
+    x : array
+        The x location of the steps
+
+    y1, y2, ... : array
+        Any number of y arrays to be turned into steps.
+        All must be the same length as ``x``
+
+    Returns
+    -------
+    x, y1, y2, .. : array
+        The x and y values converted to steps in the same order
+        as the input.  If the input is length ``N``, each of these arrays
+        will be length ``2N + 1``
+
+
+    Examples
+    --------
+    >> x_s, y1_s, y2_s = pts_to_prestep(x, y1, y2)
+    """
+    # do normalization
+    vertices = _step_validation(x, *args)
+    # create the output array
+    steps = ma.zeros((vertices.shape[0], 2 * len(x) - 1), np.float)
+    # do the to step conversion logic
+    steps[0, ::2], steps[0, 1:-1:2] = vertices[0, :], vertices[0, 1:]
+    steps[1:, 0::2], steps[1:, 1::2] = vertices[1:, :], vertices[1:, :-1]
+
+    # convert 2D array back to tuple
+    return tuple(steps)
+
+
+def pts_to_midstep(x, *args):
+    """
+    Covert continuous line to pre-steps
+
+    Given a set of N points convert to 2 N -1 points
+    which when connected linearly give a step function
+    which changes values at the begining the intervals.
+
+    Parameters
+    ----------
+    x : array
+        The x location of the steps
+
+    y1, y2, ... : array
+        Any number of y arrays to be turned into steps.
+        All must be the same length as ``x``
+
+    Returns
+    -------
+    x, y1, y2, .. : array
+        The x and y values converted to steps in the same order
+        as the input.  If the input is length ``N``, each of these arrays
+        will be length ``2N + 1``
+
+
+    Examples
+    --------
+    >> x_s, y1_s, y2_s = pts_to_prestep(x, y1, y2)
+    """
+    # do normalization
+    vertices = _step_validation(x, *args)
+    # create the output array
+    steps = ma.zeros((vertices.shape[0], 2 * len(x)), np.float)
+    steps[0, 1:-1:2] = 0.5 * (vertices[0, :-1] + vertices[0, 1:])
+    steps[0, 2::2] = 0.5 * (vertices[0, :-1] + vertices[0, 1:])
+    steps[0, 0] = vertices[0, 0]
+    steps[0, -1] = vertices[0, -1]
+    steps[1:, 0::2], steps[1:, 1::2] = vertices[1:, :], vertices[1:, :]
+
+    # convert 2D array back to tuple
+    return tuple(steps)
+
+STEP_LOOKUP_MAP = {'pre': pts_to_prestep,
+                   'post': pts_to_poststep,
+                   'mid': pts_to_midstep,
+                   'step-pre': pts_to_prestep,
+                   'step-post': pts_to_poststep,
+                   'step-mid': pts_to_midstep}
+
+
+def index_of(y):
+    """
+    A helper function to get the index of an input to plot
+    against if x values are not explicitly given.
+
+    Tries to get `y.index` (works if this is a pd.Series), if that
+    fails, return np.arange(y.shape[0]).
+
+    This will be extended in the future to deal with more types of
+    labeled data.
+
+    Parameters
+    ----------
+    y : scalar or array-like
+        The proposed y-value
+
+    Returns
+    -------
+    x, y : ndarray
+       The x and y values to plot.
+    """
+    try:
+        return y.index.values, y.values
+    except AttributeError:
+        y = np.atleast_1d(y)
+        return np.arange(y.shape[0], dtype=float), y
+
+
+def get_label(y, default_name):
+    try:
+        return y.name
+    except AttributeError:
+        return default_name
 
 # Numpy > 1.6.x deprecates putmask in favor of the new copyto.
 # So long as we support versions 1.6.x and less, we need the
@@ -1859,11 +2550,3 @@ except AttributeError:
 else:
     def _putmask(a, mask, values):
         return np.copyto(a, values, where=mask)
-
-
-if __name__=='__main__':
-    assert( allequal([1,1,1]) )
-    assert(not  allequal([1,1,0]) )
-    assert( allequal([]) )
-    assert( allequal(('a', 'a')))
-    assert( not allequal(('a', 'b')))

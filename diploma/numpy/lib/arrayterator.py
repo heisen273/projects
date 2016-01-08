@@ -7,16 +7,15 @@ an array object, and when iterated it will return sub-arrays with at most
 a user-specified number of elements.
 
 """
-
-from __future__ import division
+from __future__ import division, absolute_import, print_function
 
 from operator import mul
+from functools import reduce
+
+from numpy.compat import long
 
 __all__ = ['Arrayterator']
 
-import sys
-if sys.version_info[0] >= 3:
-    from functools import reduce
 
 class Arrayterator(object):
     """
@@ -105,7 +104,8 @@ class Arrayterator(object):
 
         """
         # Fix index, handling ellipsis and incomplete slices.
-        if not isinstance(index, tuple): index = (index,)
+        if not isinstance(index, tuple):
+            index = (index,)
         fixed = []
         length, dims = len(index), len(self.shape)
         for slice_ in index:
@@ -181,14 +181,15 @@ class Arrayterator(object):
 
     def __iter__(self):
         # Skip arrays with degenerate dimensions
-        if [dim for dim in self.shape if dim <= 0]: raise StopIteration
+        if [dim for dim in self.shape if dim <= 0]:
+            return
 
         start = self.start[:]
         stop = self.stop[:]
         step = self.step[:]
         ndims = len(self.var.shape)
 
-        while 1:
+        while True:
             count = self.buf_size or reduce(mul, self.shape)
 
             # iterate over each dimension, looking for the
@@ -200,12 +201,13 @@ class Arrayterator(object):
                 # along higher dimensions, so we read only a single position
                 if count == 0:
                     stop[i] = start[i]+1
-                elif count <= self.shape[i]:  # limit along this dimension
+                elif count <= self.shape[i]:
+                    # limit along this dimension
                     stop[i] = start[i] + count*step[i]
                     rundim = i
                 else:
-                    stop[i] = self.stop[i]  # read everything along this
-                                            # dimension
+                    # read everything along this dimension
+                    stop[i] = self.stop[i]
                 stop[i] = min(self.stop[i], stop[i])
                 count = count//self.shape[i]
 
@@ -221,4 +223,4 @@ class Arrayterator(object):
                     start[i] = self.start[i]
                     start[i-1] += self.step[i-1]
             if start[0] >= self.stop[0]:
-                raise StopIteration
+                return

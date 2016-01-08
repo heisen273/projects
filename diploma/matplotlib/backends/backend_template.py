@@ -31,10 +31,18 @@ use any module in your PYTHONPATH with the syntax::
   import matplotlib
   matplotlib.use('module://my_backend')
 
-where my_backend.py is your module name.  Thus syntax is also
-recognized in the rc file and in the -d argument in pylab, eg::
+where my_backend.py is your module name.  This syntax is also
+recognized in the rc file and in the -d argument in pylab, e.g.,::
 
   python simple_plot.py -dmodule://my_backend
+
+If your backend implements support for saving figures (i.e. has a print_xyz()
+method) you can register it as the default handler for a given file type
+
+  from matplotlib.backend_bases import register_backend
+  register_backend('xyz', 'my_backend', 'XYZ File Format')
+  ...
+  plt.savefig("figure.xyz")
 
 The files that are most relevant to backend_writers are
 
@@ -54,7 +62,10 @@ Naming Conventions
 
 """
 
-from __future__ import division
+from __future__ import (absolute_import, division, print_function,
+                        unicode_literals)
+
+from matplotlib.externals import six
 
 import matplotlib
 from matplotlib._pylab_helpers import Gcf
@@ -98,13 +109,13 @@ class RendererTemplate(RendererBase):
     # performance will probably want to implement it
 #     def draw_quad_mesh(self, gc, master_transform, meshWidth, meshHeight,
 #                        coordinates, offsets, offsetTrans, facecolors,
-#                        antialiased, showedges):
+#                        antialiased, edgecolors):
 #         pass
 
     def draw_image(self, gc, x, y, im):
         pass
 
-    def draw_text(self, gc, x, y, s, prop, angle, ismath=False):
+    def draw_text(self, gc, x, y, s, prop, angle, ismath=False, mtext=None):
         pass
 
     def flipy(self):
@@ -120,7 +131,7 @@ class RendererTemplate(RendererBase):
         return GraphicsContextTemplate()
 
     def points_to_pixels(self, points):
-        # if backend doesn't have dpi, eg, postscript or svg
+        # if backend doesn't have dpi, e.g., postscript or svg
         return points
         # elif backend assumes a value for pixels_per_inch
         #return points/72.0 * self.dpi.get() * pixels_per_inch/72.0
@@ -145,7 +156,7 @@ class GraphicsContextTemplate(GraphicsContextBase):
     methods.
 
     The base GraphicsContext stores colors as a RGB tuple on the unit
-    interval, eg, (0.5, 0.0, 1.0). You may need to map this to colors
+    interval, e.g., (0.5, 0.0, 1.0). You may need to map this to colors
     appropriate for your backend.
     """
     pass
@@ -184,13 +195,21 @@ def new_figure_manager(num, *args, **kwargs):
     """
     Create a new figure manager instance
     """
-    # if a main-level app must be created, this is the usual place to
+    # if a main-level app must be created, this (and
+    # new_figure_manager_given_figure) is the usual place to
     # do it -- see backend_wx, backend_wxagg and backend_tkagg for
     # examples.  Not all GUIs require explicit instantiation of a
     # main-level app (egg backend_gtk, backend_gtkagg) for pylab
     FigureClass = kwargs.pop('FigureClass', Figure)
     thisFig = FigureClass(*args, **kwargs)
-    canvas = FigureCanvasTemplate(thisFig)
+    return new_figure_manager_given_figure(num, thisFig)
+
+
+def new_figure_manager_given_figure(num, figure):
+    """
+    Create a new figure manager instance for the given figure.
+    """
+    canvas = FigureCanvasTemplate(figure)
     manager = FigureManagerTemplate(canvas, num)
     return manager
 
@@ -208,7 +227,7 @@ class FigureCanvasTemplate(FigureCanvasBase):
     mouse movements and key presses to functions that call the base
     class methods button_press_event, button_release_event,
     motion_notify_event, key_press_event, and key_release_event.  See,
-    eg backend_gtk.py, backend_wx.py and backend_tkagg.py
+    e.g., backend_gtk.py, backend_wx.py and backend_tkagg.py
     """
 
     def draw(self):
@@ -251,6 +270,5 @@ class FigureManagerTemplate(FigureManagerBase):
 #
 ########################################################################
 
-
+FigureCanvas = FigureCanvasTemplate
 FigureManager = FigureManagerTemplate
-

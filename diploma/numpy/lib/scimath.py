@@ -15,16 +15,22 @@ Similarly, `sqrt`, other base logarithms, `power` and trig functions are
 correctly handled.  See their respective docstrings for specific examples.
 
 """
-
-__all__ = ['sqrt', 'log', 'log2', 'logn','log10', 'power', 'arccos',
-           'arcsin', 'arctanh']
+from __future__ import division, absolute_import, print_function
 
 import numpy.core.numeric as nx
 import numpy.core.numerictypes as nt
 from numpy.core.numeric import asarray, any
 from numpy.lib.type_check import isreal
 
+
+__all__ = [
+    'sqrt', 'log', 'log2', 'logn', 'log10', 'power', 'arccos', 'arcsin',
+    'arctanh'
+    ]
+
+
 _ln2 = nx.log(2.0)
+
 
 def _tocomplex(arr):
     """Convert its input `arr` to a complex array.
@@ -83,7 +89,7 @@ def _tocomplex(arr):
     array([ 1.+0.j,  2.+0.j,  3.+0.j], dtype=complex64)
     """
     if issubclass(arr.dtype.type, (nt.single, nt.byte, nt.short, nt.ubyte,
-                                   nt.ushort,nt.csingle)):
+                                   nt.ushort, nt.csingle)):
         return arr.astype(nt.csingle)
     else:
         return arr.astype(nt.cdouble)
@@ -108,9 +114,10 @@ def _fix_real_lt_zero(x):
 
     >>> np.lib.scimath._fix_real_lt_zero([-1,2])
     array([-1.+0.j,  2.+0.j])
+
     """
     x = asarray(x)
-    if any(isreal(x) & (x<0)):
+    if any(isreal(x) & (x < 0)):
         x = _tocomplex(x)
     return x
 
@@ -162,7 +169,7 @@ def _fix_real_abs_gt_1(x):
     array([ 0.+0.j,  2.+0.j])
     """
     x = asarray(x)
-    if any(isreal(x) & (abs(x)>1)):
+    if any(isreal(x) & (abs(x) > 1)):
         x = _tocomplex(x)
     return x
 

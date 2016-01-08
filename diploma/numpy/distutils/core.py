@@ -1,3 +1,4 @@
+from __future__ import division, absolute_import, print_function
 
 import sys
 from distutils.core import *
@@ -24,7 +25,7 @@ from numpy.distutils.extension import Extension
 from numpy.distutils.numpy_distribution import NumpyDistribution
 from numpy.distutils.command import config, config_compiler, \
      build, build_py, build_ext, build_clib, build_src, build_scripts, \
-     sdist, install_data, install_headers, install, bdist_rpm, scons, \
+     sdist, install_data, install_headers, install, bdist_rpm, \
      install_clib
 from numpy.distutils.misc_util import get_data_files, is_sequence, is_string
 
@@ -38,7 +39,6 @@ numpy_cmdclass = {'build':            build.build,
                   'build_py':         build_py.build_py,
                   'build_clib':       build_clib.build_clib,
                   'sdist':            sdist.sdist,
-                  'scons':            scons.scons,
                   'install_data':     install_data.install_data,
                   'install_headers':  install_headers.install_headers,
                   'install_clib':     install_clib.install_clib,
@@ -55,7 +55,7 @@ if have_setuptools:
     numpy_cmdclass['egg_info'] = egg_info.egg_info
 
 def _dict_append(d, **kws):
-    for k,v in kws.items():
+    for k, v in kws.items():
         if k not in d:
             d[k] = v
             continue
@@ -99,29 +99,12 @@ def get_distribution(always=False):
     # class is local to a function in setuptools.command.easy_install
     if dist is not None and \
             'DistributionWithoutHelpCommands' in repr(dist):
-        #raise NotImplementedError("setuptools not supported yet for numpy.scons branch")
         dist = None
     if always and dist is None:
         dist = NumpyDistribution()
     return dist
 
-def _exit_interactive_session(_cache=[]):
-    if _cache:
-        return # been here
-    _cache.append(1)
-    print('-'*72)
-    raw_input('Press ENTER to close the interactive session..')
-    print('='*72)
-
 def setup(**attr):
-
-    if len(sys.argv)<=1 and not attr.get('script_args',[]):
-        from interactive import interactive_sys_argv
-        import atexit
-        atexit.register(_exit_interactive_session)
-        sys.argv[:] = interactive_sys_argv(sys.argv)
-        if len(sys.argv)>1:
-            return setup(**attr)
 
     cmdclass = numpy_cmdclass.copy()
 
@@ -150,13 +133,13 @@ def setup(**attr):
 
         # create setup dictionary and append to new_attr
         config = configuration()
-        if hasattr(config,'todict'):
+        if hasattr(config, 'todict'):
             config = config.todict()
         _dict_append(new_attr, **config)
 
     # Move extension source libraries to libraries
     libraries = []
-    for ext in new_attr.get('ext_modules',[]):
+    for ext in new_attr.get('ext_modules', []):
         new_libraries = []
         for item in ext.libraries:
             if is_sequence(item):
@@ -224,4 +207,4 @@ def _check_append_ext_library(libraries, lib_name, build_info):
             warnings.warn("[4] libraries list contains %r with"
                           " no build_info" % (lib_name,))
             break
-    libraries.append((lib_name,build_info))
+    libraries.append((lib_name, build_info))

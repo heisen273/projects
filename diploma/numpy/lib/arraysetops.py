@@ -22,12 +22,18 @@ thus calls to argsort().
 To do: Optionally return indices analogously to unique for all functions.
 
 :Author: Robert Cimrman
+
 """
-__all__ = ['ediff1d', 'intersect1d', 'setxor1d', 'union1d', 'setdiff1d',
-           'unique', 'in1d']
+from __future__ import division, absolute_import, print_function
 
 import numpy as np
-from numpy.lib.utils import deprecate
+
+
+__all__ = [
+    'ediff1d', 'intersect1d', 'setxor1d', 'union1d', 'setdiff1d', 'unique',
+    'in1d'
+    ]
+
 
 def ediff1d(ary, to_end=None, to_begin=None):
     """
@@ -44,7 +50,7 @@ def ediff1d(ary, to_end=None, to_begin=None):
 
     Returns
     -------
-    ed : ndarray
+    ediff1d : ndarray
         The differences. Loosely, this is ``ary.flat[1:] - ary.flat[:-1]``.
 
     See Also
@@ -87,14 +93,15 @@ def ediff1d(ary, to_end=None, to_begin=None):
 
     return ed
 
-def unique(ar, return_index=False, return_inverse=False):
+def unique(ar, return_index=False, return_inverse=False, return_counts=False):
     """
     Find the unique elements of an array.
 
-    Returns the sorted unique elements of an array. There are two optional
+    Returns the sorted unique elements of an array. There are three optional
     outputs in addition to the unique elements: the indices of the input array
-    that give the unique values, and the indices of the unique array that
-    reconstruct the input array.
+    that give the unique values, the indices of the unique array that
+    reconstruct the input array, and the number of times each unique value
+    comes up in the input array.
 
     Parameters
     ----------
@@ -106,6 +113,11 @@ def unique(ar, return_index=False, return_inverse=False):
     return_inverse : bool, optional
         If True, also return the indices of the unique array that can be used
         to reconstruct `ar`.
+    return_counts : bool, optional
+        If True, also return the number of times each unique value comes up
+        in `ar`.
+
+        .. versionadded:: 1.9.0
 
     Returns
     -------
@@ -117,6 +129,11 @@ def unique(ar, return_index=False, return_inverse=False):
     unique_inverse : ndarray, optional
         The indices to reconstruct the (flattened) original array from the
         unique array. Only provided if `return_inverse` is True.
+    unique_counts : ndarray, optional
+        The number of times each of the unique values comes up in the
+        original array. Only provided if `return_counts` is True.
+
+        .. versionadded:: 1.9.0
 
     See Also
     --------
@@ -156,45 +173,47 @@ def unique(ar, return_index=False, return_inverse=False):
     array([1, 2, 6, 4, 2, 3, 2])
 
     """
-    try:
-        ar = ar.flatten()
-    except AttributeError:
-        if not return_inverse and not return_index:
-            items = sorted(set(ar))
-            return np.asarray(items)
-        else:
-            ar = np.asanyarray(ar).flatten()
+    ar = np.asanyarray(ar).flatten()
+
+    optional_indices = return_index or return_inverse
+    optional_returns = optional_indices or return_counts
 
     if ar.size == 0:
-        if return_inverse and return_index:
-            return ar, np.empty(0, np.bool), np.empty(0, np.bool)
-        elif return_inverse or return_index:
-            return ar, np.empty(0, np.bool)
+        if not optional_returns:
+            ret = ar
         else:
-            return ar
-
-    if return_inverse or return_index:
-        if return_index:
-            perm = ar.argsort(kind='mergesort')
-        else:
-            perm = ar.argsort()
-        aux = ar[perm]
-        flag = np.concatenate(([True], aux[1:] != aux[:-1]))
-        if return_inverse:
-            iflag = np.cumsum(flag) - 1
-            iperm = perm.argsort()
+            ret = (ar,)
             if return_index:
-                return aux[flag], perm[flag], iflag[iperm]
-            else:
-                return aux[flag], iflag[iperm]
-        else:
-            return aux[flag], perm[flag]
+                ret += (np.empty(0, np.bool),)
+            if return_inverse:
+                ret += (np.empty(0, np.bool),)
+            if return_counts:
+                ret += (np.empty(0, np.intp),)
+        return ret
 
+    if optional_indices:
+        perm = ar.argsort(kind='mergesort' if return_index else 'quicksort')
+        aux = ar[perm]
     else:
         ar.sort()
-        flag = np.concatenate(([True], ar[1:] != ar[:-1]))
-        return ar[flag]
+        aux = ar
+    flag = np.concatenate(([True], aux[1:] != aux[:-1]))
 
+    if not optional_returns:
+        ret = aux[flag]
+    else:
+        ret = (aux[flag],)
+        if return_index:
+            ret += (perm[flag],)
+        if return_inverse:
+            iflag = np.cumsum(flag) - 1
+            inv_idx = np.empty(ar.shape, dtype=np.intp)
+            inv_idx[perm] = iflag
+            ret += (inv_idx,)
+        if return_counts:
+            idx = np.concatenate(np.nonzero(flag) + ([ar.size],))
+            ret += (np.diff(idx),)
+    return ret
 
 def intersect1d(ar1, ar2, assume_unique=False):
     """
@@ -212,7 +231,7 @@ def intersect1d(ar1, ar2, assume_unique=False):
 
     Returns
     -------
-    out : ndarray
+    intersect1d : ndarray
         Sorted 1D array of common and unique elements.
 
     See Also
@@ -225,14 +244,19 @@ def intersect1d(ar1, ar2, assume_unique=False):
     >>> np.intersect1d([1, 3, 4, 3], [3, 1, 2, 1])
     array([1, 3])
 
+    To intersect more than two arrays, use functools.reduce:
+
+    >>> from functools import reduce
+    >>> reduce(np.intersect1d, ([1, 3, 4, 3], [3, 1, 2, 1], [6, 3, 4, 2]))
+    array([3])
     """
     if not assume_unique:
         # Might be faster than unique( intersect1d( ar1, ar2 ) )?
         ar1 = unique(ar1)
         ar2 = unique(ar2)
-    aux = np.concatenate( (ar1, ar2) )
+    aux = np.concatenate((ar1, ar2))
     aux.sort()
-    return aux[aux[1:] == aux[:-1]]
+    return aux[:-1][aux[1:] == aux[:-1]]
 
 def setxor1d(ar1, ar2, assume_unique=False):
     """
@@ -251,7 +275,7 @@ def setxor1d(ar1, ar2, assume_unique=False):
 
     Returns
     -------
-    xor : ndarray
+    setxor1d : ndarray
         Sorted 1D array of unique values that are in only one of the input
         arrays.
 
@@ -267,38 +291,45 @@ def setxor1d(ar1, ar2, assume_unique=False):
         ar1 = unique(ar1)
         ar2 = unique(ar2)
 
-    aux = np.concatenate( (ar1, ar2) )
+    aux = np.concatenate((ar1, ar2))
     if aux.size == 0:
         return aux
 
     aux.sort()
 #    flag = ediff1d( aux, to_end = 1, to_begin = 1 ) == 0
-    flag = np.concatenate( ([True], aux[1:] != aux[:-1], [True] ) )
+    flag = np.concatenate(([True], aux[1:] != aux[:-1], [True]))
 #    flag2 = ediff1d( flag ) == 0
     flag2 = flag[1:] == flag[:-1]
     return aux[flag2]
 
-def in1d(ar1, ar2, assume_unique=False):
+def in1d(ar1, ar2, assume_unique=False, invert=False):
     """
-    Test whether each element of a 1D array is also present in a second array.
+    Test whether each element of a 1-D array is also present in a second array.
 
     Returns a boolean array the same length as `ar1` that is True
     where an element of `ar1` is in `ar2` and False otherwise.
 
     Parameters
     ----------
-    ar1 : array_like, shape (M,)
+    ar1 : (M,) array_like
         Input array.
     ar2 : array_like
         The values against which to test each value of `ar1`.
     assume_unique : bool, optional
         If True, the input arrays are both assumed to be unique, which
         can speed up the calculation.  Default is False.
+    invert : bool, optional
+        If True, the values in the returned array are inverted (that is,
+        False where an element of `ar1` is in `ar2` and True otherwise).
+        Default is False. ``np.in1d(a, b, invert=True)`` is equivalent
+        to (but is faster than) ``np.invert(in1d(a, b))``.
+
+        .. versionadded:: 1.8.0
 
     Returns
     -------
-    mask : ndarray of bools, shape(M,)
-        The values `ar1[mask]` are in `ar2`.
+    in1d : (M,) ndarray, bool
+        The values `ar1[in1d]` are in `ar2`.
 
     See Also
     --------
@@ -308,8 +339,12 @@ def in1d(ar1, ar2, assume_unique=False):
     Notes
     -----
     `in1d` can be considered as an element-wise function version of the
-    python keyword `in`, for 1D sequences. ``in1d(a, b)`` is roughly
+    python keyword `in`, for 1-D sequences. ``in1d(a, b)`` is roughly
     equivalent to ``np.array([item in b for item in a])``.
+    However, this idea fails if `ar2` is a set, or similar (non-sequence)
+    container:  As ``ar2`` is converted to an array, in those cases
+    ``asarray(ar2)`` is an object array rather than the expected array of
+    contained values.
 
     .. versionadded:: 1.4.0
 
@@ -322,26 +357,51 @@ def in1d(ar1, ar2, assume_unique=False):
     array([ True, False,  True, False,  True], dtype=bool)
     >>> test[mask]
     array([0, 2, 0])
-
+    >>> mask = np.in1d(test, states, invert=True)
+    >>> mask
+    array([False,  True, False,  True, False], dtype=bool)
+    >>> test[mask]
+    array([1, 5])
     """
+    # Ravel both arrays, behavior for the first array could be different
+    ar1 = np.asarray(ar1).ravel()
+    ar2 = np.asarray(ar2).ravel()
+
+    # This code is significantly faster when the condition is satisfied.
+    if len(ar2) < 10 * len(ar1) ** 0.145:
+        if invert:
+            mask = np.ones(len(ar1), dtype=np.bool)
+            for a in ar2:
+                mask &= (ar1 != a)
+        else:
+            mask = np.zeros(len(ar1), dtype=np.bool)
+            for a in ar2:
+                mask |= (ar1 == a)
+        return mask
+
+    # Otherwise use sorting
     if not assume_unique:
         ar1, rev_idx = np.unique(ar1, return_inverse=True)
         ar2 = np.unique(ar2)
 
-    ar = np.concatenate( (ar1, ar2) )
+    ar = np.concatenate((ar1, ar2))
     # We need this to be a stable sort, so always use 'mergesort'
     # here. The values from the first array should always come before
     # the values from the second array.
     order = ar.argsort(kind='mergesort')
     sar = ar[order]
-    equal_adj = (sar[1:] == sar[:-1])
-    flag = np.concatenate( (equal_adj, [False] ) )
-    indx = order.argsort(kind='mergesort')[:len( ar1 )]
+    if invert:
+        bool_ar = (sar[1:] != sar[:-1])
+    else:
+        bool_ar = (sar[1:] == sar[:-1])
+    flag = np.concatenate((bool_ar, [invert]))
+    ret = np.empty(ar.shape, dtype=bool)
+    ret[order] = flag
 
     if assume_unique:
-        return flag[indx]
+        return ret[:len(ar1)]
     else:
-        return flag[indx][rev_idx]
+        return ret[rev_idx]
 
 def union1d(ar1, ar2):
     """
@@ -357,7 +417,7 @@ def union1d(ar1, ar2):
 
     Returns
     -------
-    union : ndarray
+    union1d : ndarray
         Unique, sorted union of the input arrays.
 
     See Also
@@ -370,8 +430,13 @@ def union1d(ar1, ar2):
     >>> np.union1d([-1, 0, 1], [-2, 0, 2])
     array([-2, -1,  0,  1,  2])
 
+    To find the union of more than two arrays, use functools.reduce:
+
+    >>> from functools import reduce
+    >>> reduce(np.union1d, ([1, 3, 4, 3], [3, 1, 2, 1], [6, 3, 4, 2]))
+    array([1, 2, 3, 4, 6])
     """
-    return unique( np.concatenate( (ar1, ar2) ) )
+    return unique(np.concatenate((ar1, ar2)))
 
 def setdiff1d(ar1, ar2, assume_unique=False):
     """
@@ -391,7 +456,7 @@ def setdiff1d(ar1, ar2, assume_unique=False):
 
     Returns
     -------
-    difference : ndarray
+    setdiff1d : ndarray
         Sorted 1D array of values in `ar1` that are not in `ar2`.
 
     See Also
@@ -407,11 +472,9 @@ def setdiff1d(ar1, ar2, assume_unique=False):
     array([1, 2])
 
     """
-    if not assume_unique:
+    if assume_unique:
+        ar1 = np.asarray(ar1).ravel()
+    else:
         ar1 = unique(ar1)
         ar2 = unique(ar2)
-    aux = in1d(ar1, ar2, assume_unique=True)
-    if aux.size == 0:
-        return aux
-    else:
-        return np.asarray(ar1)[aux == 0]
+    return ar1[in1d(ar1, ar2, assume_unique=True, invert=True)]

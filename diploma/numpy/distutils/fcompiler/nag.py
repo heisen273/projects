@@ -1,3 +1,5 @@
+from __future__ import division, absolute_import, print_function
+
 import sys
 from numpy.distutils.fcompiler import FCompiler
 
@@ -21,7 +23,7 @@ class NAGFCompiler(FCompiler):
 
     def get_flags_linker_so(self):
         if sys.platform=='darwin':
-            return ['-unsharedf95','-Wl,-bundle,-flat_namespace,-undefined,suppress']
+            return ['-unsharedf95', '-Wl,-bundle,-flat_namespace,-undefined,suppress']
         return ["-Wl,-shared"]
     def get_flags_opt(self):
         return ['-O4']
@@ -32,7 +34,7 @@ class NAGFCompiler(FCompiler):
         else:
             return ['']
     def get_flags_debug(self):
-        return ['-g','-gline','-g90','-nan','-C']
+        return ['-g', '-gline', '-g90', '-nan', '-C']
 
 if __name__ == '__main__':
     from distutils import log

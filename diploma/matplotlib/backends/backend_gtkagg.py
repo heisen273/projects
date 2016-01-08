@@ -1,7 +1,11 @@
 """
 Render to gtk from agg
 """
-from __future__ import division
+from __future__ import (absolute_import, division, print_function,
+                        unicode_literals)
+
+from matplotlib.externals import six
+
 import os
 
 import matplotlib
@@ -9,7 +13,7 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.backends.backend_gtk import gtk, FigureManagerGTK, FigureCanvasGTK,\
      show, draw_if_interactive,\
-     error_msg_gtk, NavigationToolbar, PIXELS_PER_INCH, backend_version, \
+     error_msg_gtk, PIXELS_PER_INCH, backend_version, \
      NavigationToolbar2GTK
 from matplotlib.backends._gtkagg import agg_to_gtk_drawable
 
@@ -25,24 +29,31 @@ class FigureManagerGTKAgg(FigureManagerGTK):
     def _get_toolbar(self, canvas):
         # must be inited after the window, drawingArea and figure
         # attrs are set
-        if matplotlib.rcParams['toolbar']=='classic':
-            toolbar = NavigationToolbar (canvas, self.window)
-        elif matplotlib.rcParams['toolbar']=='toolbar2':
+        if matplotlib.rcParams['toolbar']=='toolbar2':
             toolbar = NavigationToolbar2GTKAgg (canvas, self.window)
         else:
             toolbar = None
         return toolbar
 
+
 def new_figure_manager(num, *args, **kwargs):
     """
     Create a new figure manager instance
     """
-    if DEBUG: print 'backend_gtkagg.new_figure_manager'
+    if DEBUG: print('backend_gtkagg.new_figure_manager')
     FigureClass = kwargs.pop('FigureClass', Figure)
     thisFig = FigureClass(*args, **kwargs)
-    canvas = FigureCanvasGTKAgg(thisFig)
+    return new_figure_manager_given_figure(num, thisFig)
+
+
+def new_figure_manager_given_figure(num, figure):
+    """
+    Create a new figure manager instance for the given figure.
+    """
+    canvas = FigureCanvasGTKAgg(figure)
     return FigureManagerGTKAgg(canvas, num)
-    if DEBUG: print 'backend_gtkagg.new_figure_manager done'
+    if DEBUG: print('backend_gtkagg.new_figure_manager done')
+
 
 class FigureCanvasGTKAgg(FigureCanvasGTK, FigureCanvasAgg):
     filetypes = FigureCanvasGTK.filetypes.copy()
@@ -50,7 +61,7 @@ class FigureCanvasGTKAgg(FigureCanvasGTK, FigureCanvasAgg):
 
     def configure_event(self, widget, event=None):
 
-        if DEBUG: print 'FigureCanvasGTKAgg.configure_event'
+        if DEBUG: print('FigureCanvasGTKAgg.configure_event')
         if widget.window is None:
             return
         try:
@@ -67,16 +78,16 @@ class FigureCanvasGTKAgg(FigureCanvasGTK, FigureCanvasAgg):
         self.figure.set_size_inches(winch, hinch)
         self._need_redraw = True
         self.resize_event()
-        if DEBUG: print 'FigureCanvasGTKAgg.configure_event end'
+        if DEBUG: print('FigureCanvasGTKAgg.configure_event end')
         return True
 
     def _render_figure(self, pixmap, width, height):
-        if DEBUG: print 'FigureCanvasGTKAgg.render_figure'
+        if DEBUG: print('FigureCanvasGTKAgg.render_figure')
         FigureCanvasAgg.draw(self)
-        if DEBUG: print 'FigureCanvasGTKAgg.render_figure pixmap', pixmap
+        if DEBUG: print('FigureCanvasGTKAgg.render_figure pixmap', pixmap)
         #agg_to_gtk_drawable(pixmap, self.renderer._renderer, None)
 
-        buf = self.buffer_rgba(0,0)
+        buf = self.buffer_rgba()
         ren = self.get_renderer()
         w = int(ren.width)
         h = int(ren.height)
@@ -85,22 +96,23 @@ class FigureCanvasGTKAgg(FigureCanvasGTK, FigureCanvasAgg):
             buf, gtk.gdk.COLORSPACE_RGB,  True, 8, w, h, w*4)
         pixmap.draw_pixbuf(pixmap.new_gc(), pixbuf, 0, 0, 0, 0, w, h,
                            gtk.gdk.RGB_DITHER_NONE, 0, 0)
-        if DEBUG: print 'FigureCanvasGTKAgg.render_figure done'
+        if DEBUG: print('FigureCanvasGTKAgg.render_figure done')
 
     def blit(self, bbox=None):
-        if DEBUG: print 'FigureCanvasGTKAgg.blit', self._pixmap
+        if DEBUG: print('FigureCanvasGTKAgg.blit', self._pixmap)
         agg_to_gtk_drawable(self._pixmap, self.renderer._renderer, bbox)
 
         x, y, w, h = self.allocation
 
         self.window.draw_drawable (self.style.fg_gc[self.state], self._pixmap,
                                    0, 0, 0, 0, w, h)
-        if DEBUG: print 'FigureCanvasGTKAgg.done'
+        if DEBUG: print('FigureCanvasGTKAgg.done')
 
     def print_png(self, filename, *args, **kwargs):
         # Do this so we can save the resolution of figure in the PNG file
         agg = self.switch_backends(FigureCanvasAgg)
         return agg.print_png(filename, *args, **kwargs)
+
 
 """\
 Traceback (most recent call last):
@@ -110,3 +122,6 @@ Traceback (most recent call last):
     pixbuf = gtk.gdk.pixbuf_new_from_data(
 ValueError: data length (3156672) is less then required by the other parameters (3160608)
 """
+
+FigureCanvas = FigureCanvasGTKAgg
+FigureManager = FigureManagerGTKAgg

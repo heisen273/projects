@@ -1,15 +1,17 @@
-## Automatically adapted for numpy Sep 19, 2005 by convertcode.py
+"""Automatically adapted for numpy Sep 19, 2005 by convertcode.py
 
-__all__ = ['iscomplexobj','isrealobj','imag','iscomplex',
-           'isreal','nan_to_num','real','real_if_close',
-           'typename','asfarray','mintypecode','asscalar',
-           'common_type', 'datetime_data']
+"""
+from __future__ import division, absolute_import, print_function
+
+__all__ = ['iscomplexobj', 'isrealobj', 'imag', 'iscomplex',
+           'isreal', 'nan_to_num', 'real', 'real_if_close',
+           'typename', 'asfarray', 'mintypecode', 'asscalar',
+           'common_type']
 
 import numpy.core.numeric as _nx
 from numpy.core.numeric import asarray, asanyarray, array, isnan, \
                 obj2sctype, zeros
-from numpy.core.multiarray import METADATA_DTSTR
-from ufunclike import isneginf, isposinf
+from .ufunclike import isneginf, isposinf
 
 _typecodes_by_elsize = 'GDFgdfQqLlIiHhBb?'
 
@@ -56,7 +58,7 @@ def mintypecode(typechars,typeset='GDFgdf',default='d'):
     'G'
 
     """
-    typecodes = [(type(t) is type('') and t) or asarray(t).dtype.char\
+    typecodes = [(isinstance(t, str) and t) or asarray(t).dtype.char
                  for t in typechars]
     intersection = [t for t in typecodes if t in typeset]
     if not intersection:
@@ -66,7 +68,7 @@ def mintypecode(typechars,typeset='GDFgdf',default='d'):
     l = []
     for t in intersection:
         i = _typecodes_by_elsize.index(t)
-        l.append((i,t))
+        l.append((i, t))
     l.sort()
     return l[0][1]
 
@@ -100,7 +102,7 @@ def asfarray(a, dtype=_nx.float_):
     dtype = _nx.obj2sctype(dtype)
     if not issubclass(dtype, _nx.inexact):
         dtype = _nx.float_
-    return asarray(a,dtype=dtype)
+    return asarray(a, dtype=dtype)
 
 def real(val):
     """
@@ -234,11 +236,10 @@ def isreal(x):
 
 def iscomplexobj(x):
     """
-    Return True if x is a complex type or an array of complex numbers.
+    Check for a complex type or an array of complex numbers.
 
-    The type of the input is checked, not the value. So even if the input
-    has an imaginary part equal to zero, `iscomplexobj` evaluates to True
-    if the data type is complex.
+    The type of the input is checked, not the value. Even if the input
+    has an imaginary part equal to zero, `iscomplexobj` evaluates to True.
 
     Parameters
     ----------
@@ -247,8 +248,9 @@ def iscomplexobj(x):
 
     Returns
     -------
-    y : bool
-        The return value, True if `x` is of a complex type.
+    iscomplexobj : bool
+        The return value, True if `x` is of a complex type or has at least
+        one complex element.
 
     See Also
     --------
@@ -264,7 +266,7 @@ def iscomplexobj(x):
     True
 
     """
-    return issubclass( asarray(x).dtype.type, _nx.complexfloating)
+    return issubclass(asarray(x).dtype.type, _nx.complexfloating)
 
 def isrealobj(x):
     """
@@ -298,7 +300,7 @@ def isrealobj(x):
     False
 
     """
-    return not issubclass( asarray(x).dtype.type, _nx.complexfloating)
+    return not issubclass(asarray(x).dtype.type, _nx.complexfloating)
 
 #-----------------------------------------------------------------------------
 
@@ -322,12 +324,13 @@ def nan_to_num(x):
 
     Returns
     -------
-    out : ndarray, float
-        Array with the same shape as `x` and dtype of the element in `x`  with
-        the greatest precision. NaN is replaced by zero, and infinity
-        (-infinity) is replaced by the largest (smallest or most negative)
-        floating point value that fits in the output dtype. All finite numbers
-        are upcast to the output dtype (default float64).
+    out : ndarray
+        New Array with the same shape as `x` and dtype of the element in
+        `x`  with the greatest precision. If `x` is inexact, then NaN is
+        replaced by zero, and infinity (-infinity) is replaced by the
+        largest (smallest or most negative) floating point value that fits
+        in the output dtype. If `x` is not inexact, then a copy of `x` is
+        returned.
 
     See Also
     --------
@@ -352,33 +355,22 @@ def nan_to_num(x):
             -1.28000000e+002,   1.28000000e+002])
 
     """
-    try:
-        t = x.dtype.type
-    except AttributeError:
-        t = obj2sctype(type(x))
-    if issubclass(t, _nx.complexfloating):
-        return nan_to_num(x.real) + 1j * nan_to_num(x.imag)
-    else:
-        try:
-            y = x.copy()
-        except AttributeError:
-            y = array(x)
-    if not issubclass(t, _nx.integer):
-        if not y.shape:
-            y = array([x])
-            scalar = True
-        else:
-            scalar = False
-        are_inf = isposinf(y)
-        are_neg_inf = isneginf(y)
-        are_nan = isnan(y)
-        maxf, minf = _getmaxmin(y.dtype.type)
-        y[are_nan] = 0
-        y[are_inf] = maxf
-        y[are_neg_inf] = minf
-        if scalar:
-            y = y[0]
-    return y
+    x = _nx.array(x, subok=True)
+    xtype = x.dtype.type
+    if not issubclass(xtype, _nx.inexact):
+        return x
+
+    iscomplex = issubclass(xtype, _nx.complexfloating)
+    isscalar = (x.ndim == 0)
+
+    x = x[None] if isscalar else x
+    dest = (x.real, x.imag) if iscomplex else (x,)
+    maxf, minf = _getmaxmin(x.real.dtype)
+    for d in dest:
+        _nx.copyto(d, 0.0, where=isnan(d))
+        _nx.copyto(d, maxf, where=isposinf(d))
+        _nx.copyto(d, minf, where=isneginf(d))
+    return x[0] if isscalar else x
 
 #-----------------------------------------------------------------------------
 
@@ -449,7 +441,8 @@ def asscalar(a):
     Returns
     -------
     out : scalar
-        Scalar representation of `a`. The input data type is preserved.
+        Scalar representation of `a`. The output data type is the same type
+        returned by the input's `item` method.
 
     Examples
     --------
@@ -461,28 +454,28 @@ def asscalar(a):
 
 #-----------------------------------------------------------------------------
 
-_namefromtype = {'S1' : 'character',
-                 '?' : 'bool',
-                 'b' : 'signed char',
-                 'B' : 'unsigned char',
-                 'h' : 'short',
-                 'H' : 'unsigned short',
-                 'i' : 'integer',
-                 'I' : 'unsigned integer',
-                 'l' : 'long integer',
-                 'L' : 'unsigned long integer',
-                 'q' : 'long long integer',
-                 'Q' : 'unsigned long long integer',
-                 'f' : 'single precision',
-                 'd' : 'double precision',
-                 'g' : 'long precision',
-                 'F' : 'complex single precision',
-                 'D' : 'complex double precision',
-                 'G' : 'complex long double precision',
-                 'S' : 'string',
-                 'U' : 'unicode',
-                 'V' : 'void',
-                 'O' : 'object'
+_namefromtype = {'S1': 'character',
+                 '?': 'bool',
+                 'b': 'signed char',
+                 'B': 'unsigned char',
+                 'h': 'short',
+                 'H': 'unsigned short',
+                 'i': 'integer',
+                 'I': 'unsigned integer',
+                 'l': 'long integer',
+                 'L': 'unsigned long integer',
+                 'q': 'long long integer',
+                 'Q': 'unsigned long long integer',
+                 'f': 'single precision',
+                 'd': 'double precision',
+                 'g': 'long precision',
+                 'F': 'complex single precision',
+                 'D': 'complex double precision',
+                 'G': 'complex long double precision',
+                 'S': 'string',
+                 'U': 'unicode',
+                 'V': 'void',
+                 'O': 'object'
                  }
 
 def typename(char):
@@ -539,14 +532,15 @@ def typename(char):
 #-----------------------------------------------------------------------------
 
 #determine the "minimum common type" for a group of arrays.
-array_type = [[_nx.single, _nx.double, _nx.longdouble],
-              [_nx.csingle, _nx.cdouble, _nx.clongdouble]]
-array_precision = {_nx.single : 0,
-                   _nx.double : 1,
-                   _nx.longdouble : 2,
-                   _nx.csingle : 0,
-                   _nx.cdouble : 1,
-                   _nx.clongdouble : 2}
+array_type = [[_nx.half, _nx.single, _nx.double, _nx.longdouble],
+              [None, _nx.csingle, _nx.cdouble, _nx.clongdouble]]
+array_precision = {_nx.half: 0,
+                   _nx.single: 1,
+                   _nx.double: 2,
+                   _nx.longdouble: 3,
+                   _nx.csingle: 1,
+                   _nx.cdouble: 2,
+                   _nx.clongdouble: 3}
 def common_type(*arrays):
     """
     Return a scalar type which is common to the input arrays.
@@ -590,7 +584,7 @@ def common_type(*arrays):
         if iscomplexobj(a):
             is_complex = True
         if issubclass(t, _nx.integer):
-            p = 1
+            p = 2  # array_precision[_nx.double]
         else:
             p = array_precision.get(t, None)
             if p is None:
@@ -600,49 +594,3 @@ def common_type(*arrays):
         return array_type[1][precision]
     else:
         return array_type[0][precision]
-
-def datetime_data(dtype):
-    """Return (unit, numerator, denominator, events) from a datetime dtype
-    """
-    try:
-        import ctypes
-    except ImportError:
-        raise RuntimeError, "Cannot access date-time internals without ctypes installed"
-
-    if dtype.kind not in ['m','M']:
-        raise ValueError, "Not a date-time dtype"
-
-    obj = dtype.metadata[METADATA_DTSTR]
-    class DATETIMEMETA(ctypes.Structure):
-        _fields_ = [('base', ctypes.c_int),
-                    ('num', ctypes.c_int),
-                    ('den', ctypes.c_int),
-                    ('events', ctypes.c_int)]
-
-    import sys
-    if sys.version_info[:2] >= (3, 0):
-        func = ctypes.pythonapi.PyCapsule_GetPointer
-        func.argtypes = [ctypes.py_object, ctypes.c_char_p]
-        func.restype = ctypes.c_void_p
-        result = func(ctypes.py_object(obj), ctypes.c_char_p(None))
-    else:
-        func = ctypes.pythonapi.PyCObject_AsVoidPtr
-        func.argtypes = [ctypes.py_object]
-        func.restype = ctypes.c_void_p
-        result = func(ctypes.py_object(obj))
-    result = ctypes.cast(ctypes.c_void_p(result), ctypes.POINTER(DATETIMEMETA))
-
-    struct = result[0]
-    base = struct.base
-
-    # FIXME: This needs to be kept consistent with enum in ndarrayobject.h
-    from numpy.core.multiarray import DATETIMEUNITS
-    obj = ctypes.py_object(DATETIMEUNITS)
-    if sys.version_info[:2] >= (2,7):
-        result = func(obj, ctypes.c_char_p(None))
-    else:
-        result = func(obj)
-    _unitnum2name = ctypes.cast(ctypes.c_void_p(result), ctypes.POINTER(ctypes.c_char_p))
-
-    return (_unitnum2name[base], struct.num, struct.den, struct.events)
-

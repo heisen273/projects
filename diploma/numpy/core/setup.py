@@ -1,22 +1,25 @@
+from __future__ import division, print_function
+
 import imp
 import os
 import sys
-import shutil
+import pickle
+import copy
+import warnings
 from os.path import join
 from numpy.distutils import log
 from distutils.dep_util import newer
 from distutils.sysconfig import get_config_var
-import warnings
-import re
+from numpy._build_utils.apple_accelerate import (uses_accelerate_framework,
+                                                 get_sgemv_fix)
 
 from setup_common import *
 
 # Set to True to enable multiple file compilations (experimental)
-try:
-    os.environ['NPY_SEPARATE_COMPILATION']
-    ENABLE_SEPARATE_COMPILATION = True
-except KeyError:
-    ENABLE_SEPARATE_COMPILATION = False
+ENABLE_SEPARATE_COMPILATION = (os.environ.get('NPY_SEPARATE_COMPILATION', "1") != "0")
+# Set to True to enable relaxed strides checking. This (mostly) means
+# that `strides[dim]` is ignored if `shape[dim] == 1` when setting flags.
+NPY_RELAXED_STRIDES_CHECKING = (os.environ.get('NPY_RELAXED_STRIDES_CHECKING', "0") != "0")
 
 # XXX: ugly, we use a class to avoid calling twice some expensive functions in
 # config.h/numpyconfig.h. I don't see a better way because distutils force
@@ -24,11 +27,9 @@ except KeyError:
 # configuration informations between extensions is not easy.
 # Using a pickled-based memoize does not work because config_cmd is an instance
 # method, which cPickle does not like.
-try:
-    import cPickle as _pik
-except ImportError:
-    import pickle as _pik
-import copy
+#
+# Use pickle in all cases, as cPickle is gone in python3 and the difference
+# in time is only in build. -- Charles Harris, 2013-03-30
 
 class CallOnceOnly(object):
     def __init__(self):
@@ -39,25 +40,25 @@ class CallOnceOnly(object):
     def check_types(self, *a, **kw):
         if self._check_types is None:
             out = check_types(*a, **kw)
-            self._check_types = _pik.dumps(out)
+            self._check_types = pickle.dumps(out)
         else:
-            out = copy.deepcopy(_pik.loads(self._check_types))
+            out = copy.deepcopy(pickle.loads(self._check_types))
         return out
 
     def check_ieee_macros(self, *a, **kw):
         if self._check_ieee_macros is None:
             out = check_ieee_macros(*a, **kw)
-            self._check_ieee_macros = _pik.dumps(out)
+            self._check_ieee_macros = pickle.dumps(out)
         else:
-            out = copy.deepcopy(_pik.loads(self._check_ieee_macros))
+            out = copy.deepcopy(pickle.loads(self._check_ieee_macros))
         return out
 
     def check_complex(self, *a, **kw):
         if self._check_complex is None:
             out = check_complex(*a, **kw)
-            self._check_complex = _pik.dumps(out)
+            self._check_complex = pickle.dumps(out)
         else:
-            out = copy.deepcopy(_pik.loads(self._check_complex))
+            out = copy.deepcopy(pickle.loads(self._check_complex))
         return out
 
 PYTHON_HAS_UNICODE_WIDE = True
@@ -77,34 +78,20 @@ def is_npy_no_signal():
 def is_npy_no_smp():
     """Return True if the NPY_NO_SMP symbol must be defined in public
     header (when SMP support cannot be reliably enabled)."""
-    # Python 2.3 causes a segfault when
-    #  trying to re-acquire the thread-state
-    #  which is done in error-handling
-    #  ufunc code.  NPY_ALLOW_C_API and friends
-    #  cause the segfault. So, we disable threading
-    #  for now.
-    if sys.version[:5] < '2.4.2':
-        nosmp = 1
-    else:
-        # Perhaps a fancier check is in order here.
-        #  so that threads are only enabled if there
-        #  are actually multiple CPUS? -- but
-        #  threaded code can be nice even on a single
-        #  CPU so that long-calculating code doesn't
-        #  block.
-        try:
-            nosmp = os.environ['NPY_NOSMP']
-            nosmp = 1
-        except KeyError:
-            nosmp = 0
-    return nosmp == 1
+    # Perhaps a fancier check is in order here.
+    #  so that threads are only enabled if there
+    #  are actually multiple CPUS? -- but
+    #  threaded code can be nice even on a single
+    #  CPU so that long-calculating code doesn't
+    #  block.
+    return 'NPY_NOSMP' in os.environ
 
 def win32_checks(deflist):
     from numpy.distutils.misc_util import get_build_architecture
     a = get_build_architecture()
 
     # Distutils hack on AMD64 on windows
-    print('BUILD_ARCHITECTURE: %r, os.name=%r, sys.platform=%r' % \
+    print('BUILD_ARCHITECTURE: %r, os.name=%r, sys.platform=%r' %
           (a, os.name, sys.platform))
     if a == 'AMD64':
         deflist.append('DISTUTILS_USE_SDK')
@@ -125,7 +112,7 @@ def check_math_capabilities(config, moredefs, mathlibs):
         st = config.check_funcs_once(funcs_name, libraries=mathlibs,
                                      decl=decl, call=decl)
         if st:
-            moredefs.extend([fname2def(f) for f in funcs_name])
+            moredefs.extend([(fname2def(f), 1) for f in funcs_name])
         return st
 
     def check_funcs(funcs_name):
@@ -135,7 +122,7 @@ def check_math_capabilities(config, moredefs, mathlibs):
             # Global check failed, check func per func
             for f in funcs_name:
                 if check_func(f):
-                    moredefs.append(fname2def(f))
+                    moredefs.append((fname2def(f), 1))
             return 0
         else:
             return 1
@@ -153,13 +140,35 @@ def check_math_capabilities(config, moredefs, mathlibs):
     # config.h in the public namespace, so we have a clash for the common
     # functions we test. We remove every function tested by python's
     # autoconf, hoping their own test are correct
-    if sys.version_info[:2] >= (2, 5):
-        for f in OPTIONAL_STDFUNCS_MAYBE:
-            if config.check_decl(fname2def(f),
-                        headers=["Python.h", "math.h"]):
-                OPTIONAL_STDFUNCS.remove(f)
+    for f in OPTIONAL_STDFUNCS_MAYBE:
+        if config.check_decl(fname2def(f),
+                    headers=["Python.h", "math.h"]):
+            OPTIONAL_STDFUNCS.remove(f)
 
     check_funcs(OPTIONAL_STDFUNCS)
+
+    for h in OPTIONAL_HEADERS:
+        if config.check_func("", decl=False, call=False, headers=[h]):
+            moredefs.append((fname2def(h).replace(".", "_"), 1))
+
+    for tup in OPTIONAL_INTRINSICS:
+        headers = None
+        if len(tup) == 2:
+            f, args = tup
+        else:
+            f, args, headers = tup[0], tup[1], [tup[2]]
+        if config.check_func(f, decl=False, call=True, call_args=args,
+                             headers=headers):
+            moredefs.append((fname2def(f), 1))
+
+    for dec, fn in OPTIONAL_FUNCTION_ATTRIBUTES:
+        if config.check_gcc_function_attribute(dec, fn):
+            moredefs.append((fname2def(fn), 1))
+
+    for fn in OPTIONAL_VARIABLE_ATTRIBUTES:
+        if config.check_gcc_variable_attribute(fn):
+            m = fn.replace("(", "_").replace(")", "_")
+            moredefs.append((fname2def(m), 1))
 
     # C99 functions: float and long double versions
     check_funcs(C99_FUNCS_SINGLE)
@@ -180,8 +189,8 @@ def check_complex(config, mathlibs):
     # Check for complex support
     st = config.check_header('complex.h')
     if st:
-        priv.append('HAVE_COMPLEX_H')
-        pub.append('NPY_USE_C99_COMPLEX')
+        priv.append(('HAVE_COMPLEX_H', 1))
+        pub.append(('NPY_USE_C99_COMPLEX', 1))
 
         for t in C99_COMPLEX_TYPES:
             st = config.check_type(t, headers=["complex.h"])
@@ -196,9 +205,9 @@ def check_complex(config, mathlibs):
                 for f in flist:
                     if config.check_func(f, call=True, decl=True,
                                          libraries=mathlibs):
-                        priv.append(fname2def(f))
+                        priv.append((fname2def(f), 1))
             else:
-                priv.extend([fname2def(f) for f in flist])
+                priv.extend([(fname2def(f), 1) for f in flist])
 
         check_prec('')
         check_prec('f')
@@ -221,26 +230,23 @@ def check_ieee_macros(config):
     # functions we test. We remove every function tested by python's
     # autoconf, hoping their own test are correct
     _macros = ["isnan", "isinf", "signbit", "isfinite"]
-    if sys.version_info[:2] >= (2, 6):
-        for f in _macros:
-            py_symbol = fname2def("decl_%s" % f)
-            already_declared = config.check_decl(py_symbol,
-                    headers=["Python.h", "math.h"])
-            if already_declared:
-                if config.check_macro_true(py_symbol,
-                        headers=["Python.h", "math.h"]):
-                    pub.append('NPY_%s' % fname2def("decl_%s" % f))
-            else:
-                macros.append(f)
-    else:
-        macros = _macros[:]
+    for f in _macros:
+        py_symbol = fname2def("decl_%s" % f)
+        already_declared = config.check_decl(py_symbol,
+                headers=["Python.h", "math.h"])
+        if already_declared:
+            if config.check_macro_true(py_symbol,
+                    headers=["Python.h", "math.h"]):
+                pub.append('NPY_%s' % fname2def("decl_%s" % f))
+        else:
+            macros.append(f)
     # Normally, isnan and isinf are macro (C99), but some platforms only have
     # func, or both func and macro version. Check for macro only, and define
     # replacement ones if not found.
     # Note: including Python.h is necessary because it modifies some math.h
     # definitions
     for f in macros:
-        st = config.check_decl(f, headers = ["Python.h", "math.h"])
+        st = config.check_decl(f, headers=["Python.h", "math.h"])
         if st:
             _add_decl(f)
 
@@ -259,16 +265,17 @@ def check_types(config_cmd, ext, build_dir):
     expected['long'] = [8, 4]
     expected['float'] = [4]
     expected['double'] = [8]
-    expected['long double'] = [8, 12, 16]
-    expected['Py_intptr_t'] = [4, 8]
+    expected['long double'] = [16, 12, 8]
+    expected['Py_intptr_t'] = [8, 4]
     expected['PY_LONG_LONG'] = [8]
     expected['long long'] = [8]
+    expected['off_t'] = [8, 4]
 
     # Check we have the python header (-dev* packages on Linux)
     result = config_cmd.check_header('Python.h')
     if not result:
         raise SystemError(
-                "Cannot compile 'Python.h'. Perhaps you need to "\
+                "Cannot compile 'Python.h'. Perhaps you need to "
                 "install python-dev|python-devel.")
     res = config_cmd.check_header("endian.h")
     if res:
@@ -277,7 +284,7 @@ def check_types(config_cmd, ext, build_dir):
 
     # Check basic types sizes
     for type in ('short', 'int', 'long'):
-        res = config_cmd.check_decl("SIZEOF_%s" % sym2def(type), headers = ["Python.h"])
+        res = config_cmd.check_decl("SIZEOF_%s" % sym2def(type), headers=["Python.h"])
         if res:
             public_defines.append(('NPY_SIZEOF_%s' % sym2def(type), "SIZEOF_%s" % sym2def(type)))
         else:
@@ -289,7 +296,7 @@ def check_types(config_cmd, ext, build_dir):
 
     for type in ('float', 'double', 'long double'):
         already_declared = config_cmd.check_decl("SIZEOF_%s" % sym2def(type),
-                                                 headers = ["Python.h"])
+                                                 headers=["Python.h"])
         res = config_cmd.check_type_size(type, expected=expected[type])
         if res >= 0:
             public_defines.append(('NPY_SIZEOF_%s' % sym2def(type), '%d' % res))
@@ -302,14 +309,14 @@ def check_types(config_cmd, ext, build_dir):
         # definition is binary compatible with C99 complex type (check done at
         # build time in npy_common.h)
         complex_def = "struct {%s __x; %s __y;}" % (type, type)
-        res = config_cmd.check_type_size(complex_def, expected=2*expected[type])
+        res = config_cmd.check_type_size(complex_def,
+                                         expected=[2 * x for x in expected[type]])
         if res >= 0:
             public_defines.append(('NPY_SIZEOF_COMPLEX_%s' % sym2def(type), '%d' % res))
         else:
             raise SystemError("Checking sizeof (%s) failed !" % complex_def)
 
-
-    for type in ('Py_intptr_t',):
+    for type in ('Py_intptr_t', 'off_t'):
         res = config_cmd.check_type_size(type, headers=["Python.h"],
                 library_dirs=[pythonlib_dir()],
                 expected=expected[type])
@@ -341,7 +348,7 @@ def check_types(config_cmd, ext, build_dir):
 
     if not config_cmd.check_decl('CHAR_BIT', headers=['Python.h']):
         raise RuntimeError(
-            "Config wo CHAR_BIT is not supported"\
+            "Config wo CHAR_BIT is not supported"
             ", please contact the maintainers")
 
     return private_defines, public_defines
@@ -349,10 +356,10 @@ def check_types(config_cmd, ext, build_dir):
 def check_mathlib(config_cmd):
     # Testing the C math library
     mathlibs = []
-    mathlibs_choices = [[],['m'],['cpml']]
+    mathlibs_choices = [[], ['m'], ['cpml']]
     mathlib = os.environ.get('MATHLIB')
     if mathlib:
-        mathlibs_choices.insert(0,mathlib.split(','))
+        mathlibs_choices.insert(0, mathlib.split(','))
     for libs in mathlibs_choices:
         if config_cmd.check_func("exp", libraries=libs, decl=True, call=True):
             mathlibs = libs
@@ -372,12 +379,12 @@ def visibility_define(config):
         return ''
 
 def configuration(parent_package='',top_path=None):
-    from numpy.distutils.misc_util import Configuration,dot_join
-    from numpy.distutils.system_info import get_info, default_lib_dirs
+    from numpy.distutils.misc_util import Configuration, dot_join
+    from numpy.distutils.system_info import get_info
 
-    config = Configuration('core',parent_package,top_path)
+    config = Configuration('core', parent_package, top_path)
     local_dir = config.local_path
-    codegen_dir = join(local_dir,'code_generators')
+    codegen_dir = join(local_dir, 'code_generators')
 
     if is_released(config):
         warnings.simplefilter('error', MismatchCAPIWarning)
@@ -386,32 +393,32 @@ def configuration(parent_package='',top_path=None):
     # actual C API VERSION
     check_api_version(C_API_VERSION, codegen_dir)
 
-    generate_umath_py = join(codegen_dir,'generate_umath.py')
-    n = dot_join(config.name,'generate_umath')
+    generate_umath_py = join(codegen_dir, 'generate_umath.py')
+    n = dot_join(config.name, 'generate_umath')
     generate_umath = imp.load_module('_'.join(n.split('.')),
-                                     open(generate_umath_py,'U'),generate_umath_py,
-                                     ('.py','U',1))
+                                     open(generate_umath_py, 'U'), generate_umath_py,
+                                     ('.py', 'U', 1))
 
-    header_dir = 'include/numpy' # this is relative to config.path_in_package
+    header_dir = 'include/numpy'  # this is relative to config.path_in_package
 
     cocache = CallOnceOnly()
 
     def generate_config_h(ext, build_dir):
-        target = join(build_dir,header_dir,'config.h')
+        target = join(build_dir, header_dir, 'config.h')
         d = os.path.dirname(target)
         if not os.path.exists(d):
             os.makedirs(d)
 
-        if newer(__file__,target):
+        if newer(__file__, target):
             config_cmd = config.get_config_cmd()
-            log.info('Generating %s',target)
+            log.info('Generating %s', target)
 
             # Check sizeof
             moredefs, ignored = cocache.check_types(config_cmd, ext, build_dir)
 
             # Check math library and C99 math funcs availability
             mathlibs = check_mathlib(config_cmd)
-            moredefs.append(('MATHLIB',','.join(mathlibs)))
+            moredefs.append(('MATHLIB', ','.join(mathlibs)))
 
             check_math_capabilities(config_cmd, moredefs, mathlibs)
             moredefs.extend(cocache.check_ieee_macros(config_cmd)[0])
@@ -422,8 +429,11 @@ def configuration(parent_package='',top_path=None):
                 moredefs.append('__NPY_PRIVATE_NO_SIGNAL')
 
             # Windows checks
-            if sys.platform=='win32' or os.name=='nt':
+            if sys.platform == 'win32' or os.name == 'nt':
                 win32_checks(moredefs)
+
+            # C99 restrict keyword
+            moredefs.append(('NPY_RESTRICT', config_cmd.check_restrict()))
 
             # Inline check
             inline = config_cmd.check_inline()
@@ -437,14 +447,18 @@ def configuration(parent_package='',top_path=None):
             if ENABLE_SEPARATE_COMPILATION:
                 moredefs.append(('ENABLE_SEPARATE_COMPILATION', 1))
 
+            if NPY_RELAXED_STRIDES_CHECKING:
+                moredefs.append(('NPY_RELAXED_STRIDES_CHECKING', 1))
+
             # Get long double representation
             if sys.platform != 'darwin':
                 rep = check_long_double_representation(config_cmd)
                 if rep in ['INTEL_EXTENDED_12_BYTES_LE',
                            'INTEL_EXTENDED_16_BYTES_LE',
+                           'MOTOROLA_EXTENDED_12_BYTES_BE',
                            'IEEE_QUAD_LE', 'IEEE_QUAD_BE',
                            'IEEE_DOUBLE_LE', 'IEEE_DOUBLE_BE',
-                           'DOUBLE_DOUBLE_BE']:
+                           'DOUBLE_DOUBLE_BE', 'DOUBLE_DOUBLE_LE']:
                     moredefs.append(('HAVE_LDOUBLE_%s' % rep, 1))
                 else:
                     raise ValueError("Unrecognized long double format: %s" % rep)
@@ -456,10 +470,10 @@ def configuration(parent_package='',top_path=None):
             # Generate the config.h file from moredefs
             target_f = open(target, 'w')
             for d in moredefs:
-                if isinstance(d,str):
+                if isinstance(d, str):
                     target_f.write('#define %s\n' % (d))
                 else:
-                    target_f.write('#define %s %s\n' % (d[0],d[1]))
+                    target_f.write('#define %s %s\n' % (d[0], d[1]))
 
             # define inline to our keyword, or nothing
             target_f.write('#ifndef __cplusplus\n')
@@ -478,7 +492,7 @@ def configuration(parent_package='',top_path=None):
 """)
 
             target_f.close()
-            print('File:',target)
+            print('File:', target)
             target_f = open(target)
             print(target_f.read())
             target_f.close()
@@ -486,7 +500,7 @@ def configuration(parent_package='',top_path=None):
         else:
             mathlibs = []
             target_f = open(target)
-            for line in target_f.readlines():
+            for line in target_f:
                 s = '#define MATHLIB'
                 if line.startswith(s):
                     value = line[len(s):].strip()
@@ -508,13 +522,17 @@ def configuration(parent_package='',top_path=None):
 
     def generate_numpyconfig_h(ext, build_dir):
         """Depends on config.h: generate_config_h has to be called before !"""
-        target = join(build_dir,header_dir,'_numpyconfig.h')
+        # put private include directory in build_dir on search path
+        # allows using code generation in headers headers
+        config.add_include_dirs(join(build_dir, "src", "private"))
+
+        target = join(build_dir, header_dir, '_numpyconfig.h')
         d = os.path.dirname(target)
         if not os.path.exists(d):
             os.makedirs(d)
-        if newer(__file__,target):
+        if newer(__file__, target):
             config_cmd = config.get_config_cmd()
-            log.info('Generating %s',target)
+            log.info('Generating %s', target)
 
             # Check sizeof
             ignored, moredefs = cocache.check_types(config_cmd, ext, build_dir)
@@ -534,8 +552,11 @@ def configuration(parent_package='',top_path=None):
             if ENABLE_SEPARATE_COMPILATION:
                 moredefs.append(('NPY_ENABLE_SEPARATE_COMPILATION', 1))
 
+            if NPY_RELAXED_STRIDES_CHECKING:
+                moredefs.append(('NPY_RELAXED_STRIDES_CHECKING', 1))
+
             # Check wether we can use inttypes (C99) formats
-            if config_cmd.check_decl('PRIdPTR', headers = ['inttypes.h']):
+            if config_cmd.check_decl('PRIdPTR', headers=['inttypes.h']):
                 moredefs.append(('NPY_USE_C99_FORMATS', 1))
 
             # visibility check
@@ -549,10 +570,10 @@ def configuration(parent_package='',top_path=None):
             # Add moredefs to header
             target_f = open(target, 'w')
             for d in moredefs:
-                if isinstance(d,str):
+                if isinstance(d, str):
                     target_f.write('#define %s\n' % (d))
                 else:
-                    target_f.write('#define %s %s\n' % (d[0],d[1]))
+                    target_f.write('#define %s %s\n' % (d[0], d[1]))
 
             # Define __STDC_FORMAT_MACROS
             target_f.write("""
@@ -592,88 +613,28 @@ def configuration(parent_package='',top_path=None):
     config.add_include_dirs(join(local_dir, "src", "private"))
     config.add_include_dirs(join(local_dir, "src"))
     config.add_include_dirs(join(local_dir))
-    # Multiarray version: this function is needed to build foo.c from foo.c.src
-    # when foo.c is included in another file and as such not in the src
-    # argument of build_ext command
-    def generate_multiarray_templated_sources(ext, build_dir):
-        from numpy.distutils.misc_util import get_cmd
-
-        subpath = join('src', 'multiarray')
-        sources = [join(local_dir, subpath, 'scalartypes.c.src'),
-                   join(local_dir, subpath, 'arraytypes.c.src'),
-                   join(local_dir, subpath, 'nditer.c.src'),
-                   join(local_dir, subpath, 'lowlevel_strided_loops.c.src'),
-                   join(local_dir, subpath, 'einsum.c.src')]
-
-        # numpy.distutils generate .c from .c.src in weird directories, we have
-        # to add them there as they depend on the build_dir
-        config.add_include_dirs(join(build_dir, subpath))
-
-        cmd = get_cmd('build_src')
-        cmd.ensure_finalized()
-
-        cmd.template_sources(sources, ext)
-
-    # umath version: this function is needed to build foo.c from foo.c.src
-    # when foo.c is included in another file and as such not in the src
-    # argument of build_ext command
-    def generate_umath_templated_sources(ext, build_dir):
-        from numpy.distutils.misc_util import get_cmd
-
-        subpath = join('src', 'umath')
-        # NOTE: For manual template conversion of loops.h.src, read the note
-        #       in that file.
-        sources = [join(local_dir, subpath, 'loops.c.src'),
-                   join(local_dir, subpath, 'umathmodule.c.src')]
-
-        # numpy.distutils generate .c from .c.src in weird directories, we have
-        # to add them there as they depend on the build_dir
-        config.add_include_dirs(join(build_dir, subpath))
-
-        cmd = get_cmd('build_src')
-        cmd.ensure_finalized()
-
-        cmd.template_sources(sources, ext)
-
-
-    def generate_umath_c(ext,build_dir):
-        target = join(build_dir,header_dir,'__umath_generated.c')
-        dir = os.path.dirname(target)
-        if not os.path.exists(dir):
-            os.makedirs(dir)
-        script = generate_umath_py
-        if newer(script,target):
-            f = open(target,'w')
-            f.write(generate_umath.make_code(generate_umath.defdict,
-                                             generate_umath.__file__))
-            f.close()
-        return []
 
     config.add_data_files('include/numpy/*.h')
     config.add_include_dirs(join('src', 'npymath'))
     config.add_include_dirs(join('src', 'multiarray'))
     config.add_include_dirs(join('src', 'umath'))
+    config.add_include_dirs(join('src', 'npysort'))
+
+    config.add_define_macros([("HAVE_NPY_CONFIG_H", "1")])
+    config.add_define_macros([("_FILE_OFFSET_BITS", "64")])
+    config.add_define_macros([('_LARGEFILE_SOURCE', '1')])
+    config.add_define_macros([('_LARGEFILE64_SOURCE', '1')])
 
     config.numpy_include_dirs.extend(config.paths('include'))
 
-    deps = [join('src','npymath','_signbit.c'),
-            join('include','numpy','*object.h'),
-            'include/numpy/fenv/fenv.c',
-            'include/numpy/fenv/fenv.h',
-            join(codegen_dir,'genapi.py'),
+    deps = [join('src', 'npymath', '_signbit.c'),
+            join('include', 'numpy', '*object.h'),
+            join(codegen_dir, 'genapi.py'),
             ]
 
-    # Don't install fenv unless we need them.
-    if sys.platform == 'cygwin':
-        config.add_data_dir('include/numpy/fenv')
-
-    config.add_extension('_sort',
-                         sources=[join('src','_sortmodule.c.src'),
-                                  generate_config_h,
-                                  generate_numpyconfig_h,
-                                  generate_numpy_api,
-                                  ],
-                         libraries=['npymath'])
+    #######################################################################
+    #                            dummy module                             #
+    #######################################################################
 
     # npymath needs the config.h and numpyconfig.h files to be generated, but
     # build_clib cannot handle generate_config_h and generate_numpyconfig_h
@@ -681,11 +642,23 @@ def configuration(parent_package='',top_path=None):
     # explicitly add an extension which has generate_config_h and
     # generate_numpyconfig_h as sources *before* adding npymath.
 
+    config.add_extension('_dummy',
+                         sources=[join('src', 'dummymodule.c'),
+                                  generate_config_h,
+                                  generate_numpyconfig_h,
+                                  generate_numpy_api]
+                         )
+
+    #######################################################################
+    #                          npymath library                            #
+    #######################################################################
+
     subst_dict = dict([("sep", os.path.sep), ("pkgname", "numpy.core")])
+
     def get_mathlib_info(*args):
         # Another ugly hack: the mathlib info is known once build_src is run,
         # but we cannot use add_installed_pkg_config here either, so we only
-        # updated the substition dictionary during npymath build
+        # update the substition dictionary during npymath build
         config_cmd = config.get_config_cmd()
 
         # Check that the toolchain works, to fail early if it doesn't
@@ -701,23 +674,69 @@ def configuration(parent_package='',top_path=None):
         subst_dict["posix_mathlib"] = posix_mlib
         subst_dict["msvc_mathlib"] = msvc_mlib
 
+    npymath_sources = [join('src', 'npymath', 'npy_math.c.src'),
+                       join('src', 'npymath', 'ieee754.c.src'),
+                       join('src', 'npymath', 'npy_math_complex.c.src'),
+                       join('src', 'npymath', 'halffloat.c')
+                       ]
     config.add_installed_library('npymath',
-            sources=[join('src', 'npymath', 'npy_math.c.src'),
-                     join('src', 'npymath', 'ieee754.c.src'),
-                     join('src', 'npymath', 'npy_math_complex.c.src'),
-                     join('src', 'npymath', 'halffloat.c'),
-                     get_mathlib_info],
+            sources=npymath_sources + [get_mathlib_info],
             install_dir='lib')
     config.add_npy_pkg_config("npymath.ini.in", "lib/npy-pkg-config",
             subst_dict)
     config.add_npy_pkg_config("mlib.ini.in", "lib/npy-pkg-config",
             subst_dict)
 
+    #######################################################################
+    #                         npysort library                             #
+    #######################################################################
+
+    # This library is created for the build but it is not installed
+    npysort_sources = [join('src', 'npysort', 'quicksort.c.src'),
+                       join('src', 'npysort', 'mergesort.c.src'),
+                       join('src', 'npysort', 'heapsort.c.src'),
+                       join('src', 'private', 'npy_partition.h.src'),
+                       join('src', 'npysort', 'selection.c.src'),
+                       join('src', 'private', 'npy_binsearch.h.src'),
+                       join('src', 'npysort', 'binsearch.c.src'),
+                       ]
+    config.add_library('npysort',
+                       sources=npysort_sources,
+                       include_dirs=[])
+
+    #######################################################################
+    #                        multiarray module                            #
+    #######################################################################
+
+    # Multiarray version: this function is needed to build foo.c from foo.c.src
+    # when foo.c is included in another file and as such not in the src
+    # argument of build_ext command
+    def generate_multiarray_templated_sources(ext, build_dir):
+        from numpy.distutils.misc_util import get_cmd
+
+        subpath = join('src', 'multiarray')
+        sources = [join(local_dir, subpath, 'scalartypes.c.src'),
+                   join(local_dir, subpath, 'arraytypes.c.src'),
+                   join(local_dir, subpath, 'nditer_templ.c.src'),
+                   join(local_dir, subpath, 'lowlevel_strided_loops.c.src'),
+                   join(local_dir, subpath, 'einsum.c.src'),
+                   join(local_dir, 'src', 'private', 'templ_common.h.src')
+                   ]
+
+        # numpy.distutils generate .c from .c.src in weird directories, we have
+        # to add them there as they depend on the build_dir
+        config.add_include_dirs(join(build_dir, subpath))
+        cmd = get_cmd('build_src')
+        cmd.ensure_finalized()
+        cmd.template_sources(sources, ext)
+
     multiarray_deps = [
             join('src', 'multiarray', 'arrayobject.h'),
             join('src', 'multiarray', 'arraytypes.h'),
+            join('src', 'multiarray', 'array_assign.h'),
             join('src', 'multiarray', 'buffer.h'),
             join('src', 'multiarray', 'calculation.h'),
+            join('src', 'multiarray', 'cblasfuncs.h'),
             join('src', 'multiarray', 'common.h'),
             join('src', 'multiarray', 'convert_datatype.h'),
             join('src', 'multiarray', 'convert.h'),
@@ -730,6 +749,7 @@ def configuration(parent_package='',top_path=None):
             join('src', 'multiarray', 'mapping.h'),
             join('src', 'multiarray', 'methods.h'),
             join('src', 'multiarray', 'multiarraymodule.h'),
+            join('src', 'multiarray', 'nditer_impl.h'),
             join('src', 'multiarray', 'numpymemoryview.h'),
             join('src', 'multiarray', 'number.h'),
             join('src', 'multiarray', 'numpyos.h'),
@@ -739,115 +759,217 @@ def configuration(parent_package='',top_path=None):
             join('src', 'multiarray', 'shape.h'),
             join('src', 'multiarray', 'ucsnarrow.h'),
             join('src', 'multiarray', 'usertypes.h'),
-            join('src', 'private', 'lowlevel_strided_loops.h')]
+            join('src', 'multiarray', 'vdot.h'),
+            join('src', 'private', 'npy_config.h'),
+            join('src', 'private', 'templ_common.h.src'),
+            join('src', 'private', 'lowlevel_strided_loops.h'),
+            join('include', 'numpy', 'arrayobject.h'),
+            join('include', 'numpy', '_neighborhood_iterator_imp.h'),
+            join('include', 'numpy', 'npy_endian.h'),
+            join('include', 'numpy', 'arrayscalars.h'),
+            join('include', 'numpy', 'noprefix.h'),
+            join('include', 'numpy', 'npy_interrupt.h'),
+            join('include', 'numpy', 'npy_3kcompat.h'),
+            join('include', 'numpy', 'npy_math.h'),
+            join('include', 'numpy', 'halffloat.h'),
+            join('include', 'numpy', 'npy_common.h'),
+            join('include', 'numpy', 'npy_os.h'),
+            join('include', 'numpy', 'utils.h'),
+            join('include', 'numpy', 'ndarrayobject.h'),
+            join('include', 'numpy', 'npy_cpu.h'),
+            join('include', 'numpy', 'numpyconfig.h'),
+            join('include', 'numpy', 'ndarraytypes.h'),
+            join('include', 'numpy', 'npy_1_7_deprecated_api.h'),
+            join('include', 'numpy', '_numpyconfig.h.in'),
+            # add library sources as distuils does not consider libraries
+            # dependencies
+            ] + npysort_sources + npymath_sources
 
-    multiarray_src = [join('src', 'multiarray', 'multiarraymodule.c'),
-        join('src', 'multiarray', 'hashdescr.c'),
-        join('src', 'multiarray', 'arrayobject.c'),
-        join('src', 'multiarray', 'numpymemoryview.c'),
-        join('src', 'multiarray', 'buffer.c'),
-        join('src', 'multiarray', 'datetime.c'),
-        join('src', 'multiarray', 'numpyos.c'),
-        join('src', 'multiarray', 'conversion_utils.c'),
-        join('src', 'multiarray', 'flagsobject.c'),
-        join('src', 'multiarray', 'descriptor.c'),
-        join('src', 'multiarray', 'iterators.c'),
-        join('src', 'multiarray', 'mapping.c'),
-        join('src', 'multiarray', 'number.c'),
-        join('src', 'multiarray', 'getset.c'),
-        join('src', 'multiarray', 'sequence.c'),
-        join('src', 'multiarray', 'methods.c'),
-        join('src', 'multiarray', 'ctors.c'),
-        join('src', 'multiarray', 'convert_datatype.c'),
-        join('src', 'multiarray', 'convert.c'),
-        join('src', 'multiarray', 'shape.c'),
-        join('src', 'multiarray', 'item_selection.c'),
-        join('src', 'multiarray', 'calculation.c'),
-        join('src', 'multiarray', 'common.c'),
-        join('src', 'multiarray', 'usertypes.c'),
-        join('src', 'multiarray', 'scalarapi.c'),
-        join('src', 'multiarray', 'refcount.c'),
-        join('src', 'multiarray', 'arraytypes.c.src'),
-        join('src', 'multiarray', 'scalartypes.c.src'),
-        join('src', 'multiarray', 'nditer.c.src'),
-        join('src', 'multiarray', 'lowlevel_strided_loops.c.src'),
-        join('src', 'multiarray', 'dtype_transfer.c'),
-        join('src', 'multiarray', 'nditer_pywrap.c'),
-        join('src', 'multiarray', 'einsum.c.src'),
-        join('src', 'multiarray', 'ucsnarrow.c')]
+    multiarray_src = [
+            join('src', 'multiarray', 'alloc.c'),
+            join('src', 'multiarray', 'arrayobject.c'),
+            join('src', 'multiarray', 'arraytypes.c.src'),
+            join('src', 'multiarray', 'array_assign.c'),
+            join('src', 'multiarray', 'array_assign_scalar.c'),
+            join('src', 'multiarray', 'array_assign_array.c'),
+            join('src', 'multiarray', 'buffer.c'),
+            join('src', 'multiarray', 'calculation.c'),
+            join('src', 'multiarray', 'compiled_base.c'),
+            join('src', 'multiarray', 'common.c'),
+            join('src', 'multiarray', 'convert.c'),
+            join('src', 'multiarray', 'convert_datatype.c'),
+            join('src', 'multiarray', 'conversion_utils.c'),
+            join('src', 'multiarray', 'ctors.c'),
+            join('src', 'multiarray', 'datetime.c'),
+            join('src', 'multiarray', 'datetime_strings.c'),
+            join('src', 'multiarray', 'datetime_busday.c'),
+            join('src', 'multiarray', 'datetime_busdaycal.c'),
+            join('src', 'multiarray', 'descriptor.c'),
+            join('src', 'multiarray', 'dtype_transfer.c'),
+            join('src', 'multiarray', 'einsum.c.src'),
+            join('src', 'multiarray', 'flagsobject.c'),
+            join('src', 'multiarray', 'getset.c'),
+            join('src', 'multiarray', 'hashdescr.c'),
+            join('src', 'multiarray', 'item_selection.c'),
+            join('src', 'multiarray', 'iterators.c'),
+            join('src', 'multiarray', 'lowlevel_strided_loops.c.src'),
+            join('src', 'multiarray', 'mapping.c'),
+            join('src', 'multiarray', 'methods.c'),
+            join('src', 'multiarray', 'multiarraymodule.c'),
+            join('src', 'multiarray', 'nditer_templ.c.src'),
+            join('src', 'multiarray', 'nditer_api.c'),
+            join('src', 'multiarray', 'nditer_constr.c'),
+            join('src', 'multiarray', 'nditer_pywrap.c'),
+            join('src', 'multiarray', 'number.c'),
+            join('src', 'multiarray', 'numpymemoryview.c'),
+            join('src', 'multiarray', 'numpyos.c'),
+            join('src', 'multiarray', 'refcount.c'),
+            join('src', 'multiarray', 'sequence.c'),
+            join('src', 'multiarray', 'shape.c'),
+            join('src', 'multiarray', 'scalarapi.c'),
+            join('src', 'multiarray', 'scalartypes.c.src'),
+            join('src', 'multiarray', 'usertypes.c'),
+            join('src', 'multiarray', 'ucsnarrow.c'),
+            join('src', 'multiarray', 'vdot.c'),
+            join('src', 'private', 'templ_common.h.src'),
+            ]
 
-
-    umath_src = [join('src', 'umath', 'umathmodule.c.src'),
-            join('src', 'umath', 'funcs.inc.src'),
-            join('src', 'umath', 'loops.c.src'),
-            join('src', 'umath', 'ufunc_object.c')]
-
-    umath_deps = [generate_umath_py,
-            join(codegen_dir,'generate_ufunc_api.py')]
+    blas_info = get_info('blas_opt', 0)
+    if blas_info and ('HAVE_CBLAS', None) in blas_info.get('define_macros', []):
+        extra_info = blas_info
+        # These files are also in MANIFEST.in so that they are always in
+        # the source distribution independently of HAVE_CBLAS.
+        multiarray_src.extend([join('src', 'multiarray', 'cblasfuncs.c'),
+                               join('src', 'multiarray', 'python_xerbla.c'),
+                               ])
+        if uses_accelerate_framework(blas_info):
+            multiarray_src.extend(get_sgemv_fix())
+    else:
+        extra_info = {}
 
     if not ENABLE_SEPARATE_COMPILATION:
         multiarray_deps.extend(multiarray_src)
         multiarray_src = [join('src', 'multiarray', 'multiarraymodule_onefile.c')]
         multiarray_src.append(generate_multiarray_templated_sources)
 
+    config.add_extension('multiarray',
+                         sources=multiarray_src +
+                                 [generate_config_h,
+                                  generate_numpyconfig_h,
+                                  generate_numpy_api,
+                                  join(codegen_dir, 'generate_numpy_api.py'),
+                                  join('*.py')],
+                         depends=deps + multiarray_deps,
+                         libraries=['npymath', 'npysort'],
+                         extra_info=extra_info)
+
+    #######################################################################
+    #                           umath module                              #
+    #######################################################################
+
+    # umath version: this function is needed to build foo.c from foo.c.src
+    # when foo.c is included in another file and as such not in the src
+    # argument of build_ext command
+    def generate_umath_templated_sources(ext, build_dir):
+        from numpy.distutils.misc_util import get_cmd
+
+        subpath = join('src', 'umath')
+        sources = [
+            join(local_dir, subpath, 'loops.h.src'),
+            join(local_dir, subpath, 'loops.c.src'),
+            join(local_dir, subpath, 'scalarmath.c.src'),
+            join(local_dir, subpath, 'simd.inc.src')]
+
+        # numpy.distutils generate .c from .c.src in weird directories, we have
+        # to add them there as they depend on the build_dir
+        config.add_include_dirs(join(build_dir, subpath))
+        cmd = get_cmd('build_src')
+        cmd.ensure_finalized()
+        cmd.template_sources(sources, ext)
+
+    def generate_umath_c(ext, build_dir):
+        target = join(build_dir, header_dir, '__umath_generated.c')
+        dir = os.path.dirname(target)
+        if not os.path.exists(dir):
+            os.makedirs(dir)
+        script = generate_umath_py
+        if newer(script, target):
+            f = open(target, 'w')
+            f.write(generate_umath.make_code(generate_umath.defdict,
+                                             generate_umath.__file__))
+            f.close()
+        return []
+
+    umath_src = [
+            join('src', 'umath', 'umathmodule.c'),
+            join('src', 'umath', 'reduction.c'),
+            join('src', 'umath', 'funcs.inc.src'),
+            join('src', 'umath', 'simd.inc.src'),
+            join('src', 'umath', 'loops.h.src'),
+            join('src', 'umath', 'loops.c.src'),
+            join('src', 'umath', 'ufunc_object.c'),
+            join('src', 'umath', 'scalarmath.c.src'),
+            join('src', 'umath', 'ufunc_type_resolution.c')]
+
+    umath_deps = [
+            generate_umath_py,
+            join('src', 'multiarray', 'common.h'),
+            join('src', 'private', 'templ_common.h.src'),
+            join('src', 'umath', 'simd.inc.src'),
+            join(codegen_dir, 'generate_ufunc_api.py'),
+            join('src', 'private', 'ufunc_override.h')] + npymath_sources
+
+    if not ENABLE_SEPARATE_COMPILATION:
         umath_deps.extend(umath_src)
         umath_src = [join('src', 'umath', 'umathmodule_onefile.c')]
         umath_src.append(generate_umath_templated_sources)
         umath_src.append(join('src', 'umath', 'funcs.inc.src'))
-
-    config.add_extension('multiarray',
-                         sources = multiarray_src +
-                                [generate_config_h,
-                                 generate_numpyconfig_h,
-                                 generate_numpy_api,
-                                 join(codegen_dir,'generate_numpy_api.py'),
-                                 join('*.py')],
-                         depends = deps + multiarray_deps,
-                         libraries=['npymath'])
+        umath_src.append(join('src', 'umath', 'simd.inc.src'))
 
     config.add_extension('umath',
-                         sources = [generate_config_h,
-                                    generate_numpyconfig_h,
-                                    generate_umath_c,
-                                    generate_ufunc_api,
-                                    ] + umath_src,
-                         depends = deps + umath_deps,
+                         sources=umath_src +
+                                 [generate_config_h,
+                                 generate_numpyconfig_h,
+                                 generate_umath_c,
+                                 generate_ufunc_api],
+                         depends=deps + umath_deps,
                          libraries=['npymath'],
                          )
 
-    config.add_extension('scalarmath',
-                         sources=[join('src','scalarmathmodule.c.src'),
-                                  generate_config_h,
-                                  generate_numpyconfig_h,
-                                  generate_numpy_api,
-                                  generate_ufunc_api],
-                         libraries=['npymath'],
-                         )
-
-    # Configure blasdot
-    blas_info = get_info('blas_opt',0)
-    #blas_info = {}
-    def get_dotblas_sources(ext, build_dir):
-        if blas_info:
-            if ('NO_ATLAS_INFO',1) in blas_info.get('define_macros',[]):
-                return None # dotblas needs ATLAS, Fortran compiled blas will not be sufficient.
-            return ext.depends[:1]
-        return None # no extension module will be built
-
-    config.add_extension('_dotblas',
-                         sources = [get_dotblas_sources],
-                         depends=[join('blasdot','_dotblas.c'),
-                                  join('blasdot','cblas.h'),
-                                  ],
-                         include_dirs = ['blasdot'],
-                         extra_info = blas_info
-                         )
+    #######################################################################
+    #                        umath_tests module                           #
+    #######################################################################
 
     config.add_extension('umath_tests',
-                    sources = [join('src','umath', 'umath_tests.c.src')])
+                    sources=[join('src', 'umath', 'umath_tests.c.src')])
+
+    #######################################################################
+    #                   custom rational dtype module                      #
+    #######################################################################
+
+    config.add_extension('test_rational',
+                    sources=[join('src', 'umath', 'test_rational.c.src')])
+
+    #######################################################################
+    #                        struct_ufunc_test module                     #
+    #######################################################################
+
+    config.add_extension('struct_ufunc_test',
+                    sources=[join('src', 'umath', 'struct_ufunc_test.c.src')])
+
+    #######################################################################
+    #                     multiarray_tests module                         #
+    #######################################################################
 
     config.add_extension('multiarray_tests',
-                    sources = [join('src', 'multiarray', 'multiarray_tests.c.src')])
+                    sources=[join('src', 'multiarray', 'multiarray_tests.c.src')])
+
+    #######################################################################
+    #                        operand_flag_tests module                    #
+    #######################################################################
+
+    config.add_extension('operand_flag_tests',
+                    sources=[join('src', 'umath', 'operand_flag_tests.c.src')])
 
     config.add_data_dir('tests')
     config.add_data_dir('tests/data')
@@ -856,6 +978,6 @@ def configuration(parent_package='',top_path=None):
 
     return config
 
-if __name__=='__main__':
+if __name__ == '__main__':
     from numpy.distutils.core import setup
     setup(configuration=configuration)

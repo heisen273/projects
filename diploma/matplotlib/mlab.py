@@ -7,61 +7,95 @@ MATLAB compatible functions
 -------------------------------
 
 :func:`cohere`
-  Coherence (normalized cross spectral density)
+    Coherence (normalized cross spectral density)
 
 :func:`csd`
-  Cross spectral density uing Welch's average periodogram
+    Cross spectral density uing Welch's average periodogram
 
 :func:`detrend`
-  Remove the mean or best fit line from an array
+    Remove the mean or best fit line from an array
 
 :func:`find`
-  Return the indices where some condition is true;
-         numpy.nonzero is similar but more general.
+    Return the indices where some condition is true;
+    numpy.nonzero is similar but more general.
 
 :func:`griddata`
-  interpolate irregularly distributed data to a
-             regular grid.
+    Interpolate irregularly distributed data to a
+    regular grid.
 
 :func:`prctile`
-  find the percentiles of a sequence
+    Find the percentiles of a sequence
 
 :func:`prepca`
-  Principal Component Analysis
+    Principal Component Analysis
 
 :func:`psd`
-  Power spectral density uing Welch's average periodogram
+    Power spectral density uing Welch's average periodogram
 
 :func:`rk4`
-  A 4th order runge kutta integrator for 1D or ND systems
+    A 4th order runge kutta integrator for 1D or ND systems
 
 :func:`specgram`
-  Spectrogram (power spectral density over segments of time)
+    Spectrogram (spectrum over segments of time)
 
 Miscellaneous functions
 -------------------------
 
 Functions that don't exist in MATLAB, but are useful anyway:
 
-:meth:`cohere_pairs`
+:func:`cohere_pairs`
     Coherence over all pairs.  This is not a MATLAB function, but we
     compute coherence a lot in my lab, and we compute it for a lot of
     pairs.  This function is optimized to do this efficiently by
     caching the direct FFTs.
 
-:meth:`rk4`
+:func:`rk4`
     A 4th order Runge-Kutta ODE integrator in case you ever find
     yourself stranded without scipy (and the far superior
     scipy.integrate tools)
 
-:meth:`contiguous_regions`
-    return the indices of the regions spanned by some logical mask
+:func:`contiguous_regions`
+    Return the indices of the regions spanned by some logical mask
 
-:meth:`cross_from_below`
-    return the indices where a 1D array crosses a threshold from below
+:func:`cross_from_below`
+    Return the indices where a 1D array crosses a threshold from below
 
-:meth:`cross_from_above`
-    return the indices where a 1D array crosses a threshold from above
+:func:`cross_from_above`
+    Return the indices where a 1D array crosses a threshold from above
+
+:func:`complex_spectrum`
+    Return the complex-valued frequency spectrum of a signal
+
+:func:`magnitude_spectrum`
+    Return the magnitude of the frequency spectrum of a signal
+
+:func:`angle_spectrum`
+    Return the angle (wrapped phase) of the frequency spectrum of a signal
+
+:func:`phase_spectrum`
+    Return the phase (unwrapped angle) of the frequency spectrum of a signal
+
+:func:`detrend_mean`
+    Remove the mean from a line.
+
+:func:`demean`
+    Remove the mean from a line. This function is the same as as
+    :func:`detrend_mean` except for the default *axis*.
+
+:func:`detrend_linear`
+    Remove the best fit line from a line.
+
+:func:`detrend_none`
+    Return the original line.
+
+:func:`stride_windows`
+    Get all windows in an array in a memory-efficient manner
+
+:func:`stride_repeat`
+    Repeat an array in a memory-efficient manner
+
+:func:`apply_window`
+    Apply a window along a given axis
 
 
 record array helper functions
@@ -73,32 +107,32 @@ A collection of helper methods for numpyrecord arrays
 
     See :ref:`misc-examples-index`
 
-:meth:`rec2txt`
-    pretty print a record array
+:func:`rec2txt`
+    Pretty print a record array
 
-:meth:`rec2csv`
-    store record array in CSV file
+:func:`rec2csv`
+    Store record array in CSV file
 
-:meth:`csv2rec`
-    import record array from CSV file with type inspection
+:func:`csv2rec`
+    Import record array from CSV file with type inspection
 
-:meth:`rec_append_fields`
-    adds  field(s)/array(s) to record array
+:func:`rec_append_fields`
+    Adds  field(s)/array(s) to record array
 
-:meth:`rec_drop_fields`
-    drop fields from record array
+:func:`rec_drop_fields`
+    Drop fields from record array
 
-:meth:`rec_join`
-    join two record arrays on sequence of fields
+:func:`rec_join`
+    Join two record arrays on sequence of fields
 
-:meth:`recs_join`
-    a simple join of multiple recarrays using a single column as a key
+:func:`recs_join`
+    A simple join of multiple recarrays using a single column as a key
 
-:meth:`rec_groupby`
-    summarize data by groups (similar to SQL GROUP BY)
+:func:`rec_groupby`
+    Summarize data by groups (similar to SQL GROUP BY)
 
-:meth:`rec_summarize`
-    helper code to filter rec array fields into new fields
+:func:`rec_summarize`
+    Helper code to filter rec array fields into new fields
 
 For the rec viewer functions(e rec2csv), there are a bunch of Format
 objects you can pass into the functions that will do things like color
@@ -126,105 +160,559 @@ Example usage::
     gtk.main()
 
 
-Deprecated functions
----------------------
-
-The following are deprecated; please import directly from numpy (with
-care--function signatures may differ):
-
-
-:meth:`load`
-    load ASCII file - use numpy.loadtxt
-
-:meth:`save`
-    save ASCII file - use numpy.savetxt
-
 """
 
-from __future__ import division
-import csv, warnings, copy, os, operator
+from __future__ import (absolute_import, division, print_function,
+                        unicode_literals)
+
+from matplotlib.externals import six
+from matplotlib.externals.six.moves import map, xrange, zip
+
+import copy
+import csv
+import operator
+import os
+import warnings
 
 import numpy as np
-ma = np.ma
 from matplotlib import verbose
 
-import matplotlib.nxutils as nxutils
 import matplotlib.cbook as cbook
 from matplotlib import docstring
+from matplotlib.path import Path
+import math
+
+ma = np.ma
+
+if six.PY3:
+    long = int
 
 
-def logspace(xmin,xmax,N):
+def logspace(xmin, xmax, N):
+    '''
+    Return N values logarithmically spaced between xmin and xmax.
+
+    Call signature::
+
+        logspace(xmin, xmax, N)
+    '''
     return np.exp(np.linspace(np.log(xmin), np.log(xmax), N))
 
+
 def _norm(x):
-    "return sqrt(x dot x)"
-    return np.sqrt(np.dot(x,x))
+    '''
+    Return sqrt(x dot x).
+
+    Call signature::
+
+        _norm(x)
+    '''
+    return np.sqrt(np.dot(x, x))
+
 
 def window_hanning(x):
-    "return x times the hanning window of len(x)"
+    '''
+    Return x times the hanning window of len(x).
+
+    Call signature::
+
+        window_hanning(x)
+
+    .. seealso::
+
+        :func:`window_none`
+            :func:`window_none` is another window algorithm.
+    '''
     return np.hanning(len(x))*x
 
+
 def window_none(x):
-    "No window function; simply return x"
+    '''
+    No window function; simply return x.
+
+    Call signature::
+
+        window_none(x)
+
+    .. seealso::
+
+        :func:`window_hanning`
+            :func:`window_hanning` is another window algorithm.
+    '''
     return x
 
-def detrend(x, key=None):
-    if key is None or key=='constant':
-        return detrend_mean(x)
-    elif key=='linear':
-        return detrend_linear(x)
+
+def apply_window(x, window, axis=0, return_window=None):
+    '''
+    Apply the given window to the given 1D or 2D array along the given axis.
+
+    Call signature::
+
+        apply_window(x, window, axis=0, return_window=False)
+
+      *x*: 1D or 2D array or sequence
+        Array or sequence containing the data.
+
+      *winodw*: function or array.
+        Either a function to generate a window or an array with length
+        *x*.shape[*axis*]
+
+      *axis*: integer
+        The axis over which to do the repetition.
+        Must be 0 or 1.  The default is 0
+
+      *return_window*: bool
+        If true, also return the 1D values of the window that was applied
+    '''
+    x = np.asarray(x)
+
+    if x.ndim < 1 or x.ndim > 2:
+        raise ValueError('only 1D or 2D arrays can be used')
+    if axis+1 > x.ndim:
+        raise ValueError('axis(=%s) out of bounds' % axis)
+
+    xshape = list(x.shape)
+    xshapetarg = xshape.pop(axis)
+
+    if cbook.iterable(window):
+        if len(window) != xshapetarg:
+            raise ValueError('The len(window) must be the same as the shape '
+                             'of x for the chosen axis')
+        windowVals = window
+    else:
+        windowVals = window(np.ones(xshapetarg, dtype=x.dtype))
+
+    if x.ndim == 1:
+        if return_window:
+            return windowVals * x, windowVals
+        else:
+            return windowVals * x
+
+    xshapeother = xshape.pop()
+
+    otheraxis = (axis+1) % 2
+
+    windowValsRep = stride_repeat(windowVals, xshapeother, axis=otheraxis)
+
+    if return_window:
+        return windowValsRep * x, windowVals
+    else:
+        return windowValsRep * x
+
+
+def detrend(x, key=None, axis=None):
+    '''
+    Return x with its trend removed.
+
+    Call signature::
+
+        detrend(x, key='mean')
+
+      *x*: array or sequence
+        Array or sequence containing the data.
+
+      *key*: [ 'default' | 'constant' | 'mean' | 'linear' | 'none'] or function
+          Specifies the detrend algorithm to use.  'default' is 'mean',
+          which is the same as :func:`detrend_mean`.  'constant' is the same.
+          'linear' is the same as :func:`detrend_linear`.  'none' is the same
+          as :func:`detrend_none`.  The default is 'mean'.  See the
+          corresponding functions for more details regarding the algorithms.
+          Can also be a function that carries out the detrend operation.
+
+      *axis*: integer
+        The axis along which to do the detrending.
+
+    .. seealso::
+
+        :func:`detrend_mean`
+            :func:`detrend_mean` implements the 'mean' algorithm.
+
+        :func:`detrend_linear`
+            :func:`detrend_linear` implements the 'linear' algorithm.
+
+        :func:`detrend_none`
+            :func:`detrend_none` implements the 'none' algorithm.
+    '''
+    if key is None or key in ['constant', 'mean', 'default']:
+        return detrend(x, key=detrend_mean, axis=axis)
+    elif key == 'linear':
+        return detrend(x, key=detrend_linear, axis=axis)
+    elif key == 'none':
+        return detrend(x, key=detrend_none, axis=axis)
+    elif cbook.is_string_like(key):
+        raise ValueError("Unknown value for key %s, must be one of: "
+                         "'default', 'constant', 'mean', "
+                         "'linear', or a function" % key)
+
+    if not callable(key):
+        raise ValueError("Unknown value for key %s, must be one of: "
+                         "'default', 'constant', 'mean', "
+                         "'linear', or a function" % key)
+
+    x = np.asarray(x)
+
+    if axis is not None and axis+1 > x.ndim:
+        raise ValueError('axis(=%s) out of bounds' % axis)
+
+    if (axis is None and x.ndim == 0) or (not axis and x.ndim == 1):
+        return key(x)
+
+    # try to use the 'axis' argument if the function supports it,
+    # otherwise use apply_along_axis to do it
+    try:
+        return key(x, axis=axis)
+    except TypeError:
+        return np.apply_along_axis(key, axis=axis, arr=x)
+
 
 def demean(x, axis=0):
-    "Return x minus its mean along the specified axis"
+    '''
+    Return x minus its mean along the specified axis.
+
+    Call signature::
+
+        demean(x, axis=0)
+
+      *x*: array or sequence
+        Array or sequence containing the data
+        Can have any dimensionality
+
+      *axis*: integer
+        The axis along which to take the mean.  See numpy.mean for a
+        description of this argument.
+
+    .. seealso::
+
+        :func:`delinear`
+
+        :func:`denone`
+            :func:`delinear` and :func:`denone` are other detrend algorithms.
+
+        :func:`detrend_mean`
+            This function is the same as as :func:`detrend_mean` except
+            for the default *axis*.
+    '''
+    return detrend_mean(x, axis=axis)
+
+
+def detrend_mean(x, axis=None):
+    '''
+    Return x minus the mean(x).
+
+    Call signature::
+
+        detrend_mean(x, axis=None)
+
+      *x*: array or sequence
+        Array or sequence containing the data
+        Can have any dimensionality
+
+      *axis*: integer
+        The axis along which to take the mean.  See numpy.mean for a
+        description of this argument.
+
+    .. seealso::
+
+        :func:`demean`
+            This function is the same as as :func:`demean` except
+            for the default *axis*.
+
+        :func:`detrend_linear`
+
+        :func:`detrend_none`
+            :func:`detrend_linear` and :func:`detrend_none` are other
+            detrend algorithms.
+
+        :func:`detrend`
+            :func:`detrend` is a wrapper around all the detrend algorithms.
+    '''
     x = np.asarray(x)
+
+    if axis is not None and axis+1 > x.ndim:
+        raise ValueError('axis(=%s) out of bounds' % axis)
+
+    # short-circuit 0-D array.
+    if not x.ndim:
+        return np.array(0., dtype=x.dtype)
+
+    # short-circuit simple operations
     if axis == 0 or axis is None or x.ndim <= 1:
         return x - x.mean(axis)
+
     ind = [slice(None)] * x.ndim
     ind[axis] = np.newaxis
     return x - x.mean(axis)[ind]
 
-def detrend_mean(x):
-    "Return x minus the mean(x)"
-    return x - x.mean()
 
-def detrend_none(x):
-    "Return x: no detrending"
+def detrend_none(x, axis=None):
+    '''
+    Return x: no detrending.
+
+    Call signature::
+
+        detrend_none(x, axis=None)
+
+      *x*: any object
+        An object containing the data
+
+      *axis*: integer
+        This parameter is ignored.
+        It is included for compatibility with detrend_mean
+
+    .. seealso::
+
+        :func:`denone`
+            This function is the same as as :func:`denone` except
+            for the default *axis*, which has no effect.
+
+        :func:`detrend_mean`
+
+        :func:`detrend_linear`
+            :func:`detrend_mean` and :func:`detrend_linear` are other
+            detrend algorithms.
+
+        :func:`detrend`
+            :func:`detrend` is a wrapper around all the detrend algorithms.
+    '''
     return x
 
+
 def detrend_linear(y):
-    "Return y minus best fit line; 'linear' detrending "
+    '''
+    Return x minus best fit line; 'linear' detrending.
+
+    Call signature::
+
+        detrend_linear(y)
+
+      *y*: 0-D or 1-D array or sequence
+        Array or sequence containing the data
+
+      *axis*: integer
+        The axis along which to take the mean.  See numpy.mean for a
+        description of this argument.
+
+    .. seealso::
+
+        :func:`delinear`
+            This function is the same as as :func:`delinear` except
+            for the default *axis*.
+
+        :func:`detrend_mean`
+
+        :func:`detrend_none`
+            :func:`detrend_mean` and :func:`detrend_none` are other
+            detrend algorithms.
+
+        :func:`detrend`
+            :func:`detrend` is a wrapper around all the detrend algorithms.
+    '''
     # This is faster than an algorithm based on linalg.lstsq.
-    x = np.arange(len(y), dtype=np.float_)
+    y = np.asarray(y)
+
+    if y.ndim > 1:
+        raise ValueError('y cannot have ndim > 1')
+
+    # short-circuit 0-D array.
+    if not y.ndim:
+        return np.array(0., dtype=y.dtype)
+
+    x = np.arange(y.size, dtype=np.float_)
+
     C = np.cov(x, y, bias=1)
-    b = C[0,1]/C[0,0]
+    b = C[0, 1]/C[0, 0]
+
     a = y.mean() - b*x.mean()
     return y - (b*x + a)
 
-#This is a helper function that implements the commonality between the
-#psd, csd, and spectrogram.  It is *NOT* meant to be used outside of mlab
-def _spectral_helper(x, y, NFFT=256, Fs=2, detrend=detrend_none,
-        window=window_hanning, noverlap=0, pad_to=None, sides='default',
-        scale_by_freq=None):
-    #The checks for if y is x are so that we can use the same function to
-    #implement the core of psd(), csd(), and spectrogram() without doing
-    #extra calculations.  We return the unaveraged Pxy, freqs, and t.
-    same_data = y is x
 
-    #Make sure we're dealing with a numpy array. If y and x were the same
-    #object to start with, keep them that way
+def stride_windows(x, n, noverlap=None, axis=0):
+    '''
+    Get all windows of x with length n as a single array,
+    using strides to avoid data duplication.
+
+    .. warning::
+
+        It is not safe to write to the output array.  Multiple
+        elements may point to the same piece of memory,
+        so modifying one value may change others.
+
+    Call signature::
+
+        stride_windows(x, n, noverlap=0)
+
+      *x*: 1D array or sequence
+        Array or sequence containing the data.
+
+      *n*: integer
+        The number of data points in each window.
+
+      *noverlap*: integer
+        The overlap between adjacent windows.
+        Default is 0 (no overlap)
+
+      *axis*: integer
+        The axis along which the windows will run.
+
+    Refs:
+        `stackoverflaw: Rolling window for 1D arrays in Numpy?
+        <http://stackoverflow.com/a/6811241>`_
+        `stackoverflaw: Using strides for an efficient moving average filter
+        <http://stackoverflow.com/a/4947453>`_
+    '''
+    if noverlap is None:
+        noverlap = 0
+
+    if noverlap >= n:
+        raise ValueError('noverlap must be less than n')
+    if n < 1:
+        raise ValueError('n cannot be less than 1')
+
+    x = np.asarray(x)
+
+    if x.ndim != 1:
+        raise ValueError('only 1-dimensional arrays can be used')
+    if n == 1 and noverlap == 0:
+        if axis == 0:
+            return x[np.newaxis]
+        else:
+            return x[np.newaxis].transpose()
+    if n > x.size:
+        raise ValueError('n cannot be greater than the length of x')
+
+    # np.lib.stride_tricks.as_strided easily leads to memory corruption for
+    # non integer shape and strides, i.e. noverlap or n. See #3845.
+    noverlap = int(noverlap)
+    n = int(n)
+
+    step = n - noverlap
+    if axis == 0:
+        shape = (n, (x.shape[-1]-noverlap)//step)
+        strides = (x.strides[0], step*x.strides[0])
+    else:
+        shape = ((x.shape[-1]-noverlap)//step, n)
+        strides = (step*x.strides[0], x.strides[0])
+    return np.lib.stride_tricks.as_strided(x, shape=shape, strides=strides)
+
+
+def stride_repeat(x, n, axis=0):
+    '''
+    Repeat the values in an array in a memory-efficient manner.  Array x is
+    stacked vertically n times.
+
+    .. warning::
+
+        It is not safe to write to the output array.  Multiple
+        elements may point to the same piece of memory, so
+        modifying one value may change others.
+
+    Call signature::
+
+        stride_repeat(x, n, axis=0)
+
+      *x*: 1D array or sequence
+        Array or sequence containing the data.
+
+      *n*: integer
+        The number of time to repeat the array.
+
+      *axis*: integer
+        The axis along which the data will run.
+
+    Refs:
+        `stackoverflaw: Repeat NumPy array without replicating data?
+        <http://stackoverflow.com/a/5568169>`_
+    '''
+    if axis not in [0, 1]:
+        raise ValueError('axis must be 0 or 1')
+    x = np.asarray(x)
+    if x.ndim != 1:
+        raise ValueError('only 1-dimensional arrays can be used')
+
+    if n == 1:
+        if axis == 0:
+            return np.atleast_2d(x)
+        else:
+            return np.atleast_2d(x).T
+    if n < 1:
+        raise ValueError('n cannot be less than 1')
+
+    # np.lib.stride_tricks.as_strided easily leads to memory corruption for
+    # non integer shape and strides, i.e. n. See #3845.
+    n = int(n)
+
+    if axis == 0:
+        shape = (n, x.size)
+        strides = (0, x.strides[0])
+    else:
+        shape = (x.size, n)
+        strides = (x.strides[0], 0)
+
+    return np.lib.stride_tricks.as_strided(x, shape=shape, strides=strides)
+
+
+def _spectral_helper(x, y=None, NFFT=None, Fs=None, detrend_func=None,
+                     window=None, noverlap=None, pad_to=None,
+                     sides=None, scale_by_freq=None, mode=None):
+    '''
+    This is a helper function that implements the commonality between the
+    psd, csd, spectrogram and complex, magnitude, angle, and phase spectrums.
+    It is *NOT* meant to be used outside of mlab and may change at any time.
+    '''
+    if y is None:
+        # if y is None use x for y
+        same_data = True
+    else:
+        # The checks for if y is x are so that we can use the same function to
+        # implement the core of psd(), csd(), and spectrogram() without doing
+        # extra calculations.  We return the unaveraged Pxy, freqs, and t.
+        same_data = y is x
+
+    if Fs is None:
+        Fs = 2
+    if noverlap is None:
+        noverlap = 0
+    if detrend_func is None:
+        detrend_func = detrend_none
+    if window is None:
+        window = window_hanning
+
+    # if NFFT is set to None use the whole signal
+    if NFFT is None:
+        NFFT = 256
+
+    if mode is None or mode == 'default':
+        mode = 'psd'
+    elif mode not in ['psd', 'complex', 'magnitude', 'angle', 'phase']:
+        raise ValueError("Unknown value for mode %s, must be one of: "
+                         "'default', 'psd', 'complex', "
+                         "'magnitude', 'angle', 'phase'" % mode)
+
+    if not same_data and mode != 'psd':
+        raise ValueError("x and y must be equal if mode is not 'psd'")
+
+    # Make sure we're dealing with a numpy array. If y and x were the same
+    # object to start with, keep them that way
     x = np.asarray(x)
     if not same_data:
         y = np.asarray(y)
-    else:
-        y = x
+
+    if sides is None or sides == 'default':
+        if np.iscomplexobj(x):
+            sides = 'twosided'
+        else:
+            sides = 'onesided'
+    elif sides not in ['onesided', 'twosided']:
+        raise ValueError("Unknown value for sides %s, must be one of: "
+                         "'default', 'onesided', or 'twosided'" % sides)
 
     # zero pad x and y up to NFFT if they are shorter than NFFT
-    if len(x)<NFFT:
+    if len(x) < NFFT:
         n = len(x)
         x = np.resize(x, (NFFT,))
         x[n:] = 0
 
-    if not same_data and len(y)<NFFT:
+    if not same_data and len(y) < NFFT:
         n = len(y)
         y = np.resize(y, (NFFT,))
         y[n:] = 0
@@ -232,94 +720,132 @@ def _spectral_helper(x, y, NFFT=256, Fs=2, detrend=detrend_none,
     if pad_to is None:
         pad_to = NFFT
 
-    if scale_by_freq is None:
+    if mode != 'psd':
+        scale_by_freq = False
+    elif scale_by_freq is None:
         scale_by_freq = True
 
     # For real x, ignore the negative frequencies unless told otherwise
-    if (sides == 'default' and np.iscomplexobj(x)) or sides == 'twosided':
+    if sides == 'twosided':
         numFreqs = pad_to
-        scaling_factor = 1.
-    elif sides in ('default', 'onesided'):
-        numFreqs = pad_to//2 + 1
-        scaling_factor = 2.
-    else:
-        raise ValueError("sides must be one of: 'default', 'onesided', or "
-            "'twosided'")
-
-    if cbook.iterable(window):
-        assert(len(window) == NFFT)
-        windowVals = window
-    else:
-        windowVals = window(np.ones((NFFT,), x.dtype))
-
-    step = NFFT - noverlap
-    ind = np.arange(0, len(x) - NFFT + 1, step)
-    n = len(ind)
-    Pxy = np.zeros((numFreqs, n), np.complex_)
-
-    # do the ffts of the slices
-    for i in range(n):
-        thisX = x[ind[i]:ind[i]+NFFT]
-        thisX = windowVals * detrend(thisX)
-        fx = np.fft.fft(thisX, n=pad_to)
-
-        if same_data:
-            fy = fx
+        if pad_to % 2:
+            freqcenter = (pad_to - 1)//2 + 1
         else:
-            thisY = y[ind[i]:ind[i]+NFFT]
-            thisY = windowVals * detrend(thisY)
-            fy = np.fft.fft(thisY, n=pad_to)
-        Pxy[:,i] = np.conjugate(fx[:numFreqs]) * fy[:numFreqs]
+            freqcenter = pad_to//2
+        scaling_factor = 1.
+    elif sides == 'onesided':
+        if pad_to % 2:
+            numFreqs = (pad_to + 1)//2
+        else:
+            numFreqs = pad_to//2 + 1
+        scaling_factor = 2.
 
-    # Scale the spectrum by the norm of the window to compensate for
-    # windowing loss; see Bendat & Piersol Sec 11.5.2.
-    Pxy /= (np.abs(windowVals)**2).sum()
+    result = stride_windows(x, NFFT, noverlap, axis=0)
+    result = detrend(result, detrend_func, axis=0)
+    result, windowVals = apply_window(result, window, axis=0,
+                                      return_window=True)
+    result = np.fft.fft(result, n=pad_to, axis=0)[:numFreqs, :]
+    freqs = np.fft.fftfreq(pad_to, 1/Fs)[:numFreqs]
 
-    # Also include scaling factors for one-sided densities and dividing by the
-    # sampling frequency, if desired. Scale everything, except the DC component
-    # and the NFFT/2 component:
-    Pxy[1:-1] *= scaling_factor
+    if not same_data:
+        # if same_data is False, mode must be 'psd'
+        resultY = stride_windows(y, NFFT, noverlap)
+        resultY = apply_window(resultY, window, axis=0)
+        resultY = detrend(resultY, detrend_func, axis=0)
+        resultY = np.fft.fft(resultY, n=pad_to, axis=0)[:numFreqs, :]
+        result = np.conjugate(result) * resultY
+    elif mode == 'psd':
+        result = np.conjugate(result) * result
+    elif mode == 'magnitude':
+        result = np.absolute(result)
+    elif mode == 'angle' or mode == 'phase':
+        # we unwrap the phase later to handle the onesided vs. twosided case
+        result = np.angle(result)
+    elif mode == 'complex':
+        pass
 
-    # MATLAB divides by the sampling frequency so that density function
-    # has units of dB/Hz and can be integrated by the plotted frequency
-    # values. Perform the same scaling here.
-    if scale_by_freq:
-        Pxy /= Fs
+    if mode == 'psd':
 
-    t = 1./Fs * (ind + NFFT / 2.)
-    freqs = float(Fs) / pad_to * np.arange(numFreqs)
+        # Also include scaling factors for one-sided densities and dividing by
+        # the sampling frequency, if desired. Scale everything, except the DC
+        # component and the NFFT/2 component:
 
-    if (np.iscomplexobj(x) and sides == 'default') or sides == 'twosided':
+        # if we have a even number of frequencies, don't scale NFFT/2
+        if not NFFT % 2:
+            slc = slice(1, -1, None)
+        # if we have an odd number, just don't scale DC
+        else:
+            slc = slice(1, None, None)
+
+        result[slc] *= scaling_factor
+
+        # MATLAB divides by the sampling frequency so that density function
+        # has units of dB/Hz and can be integrated by the plotted frequency
+        # values. Perform the same scaling here.
+        if scale_by_freq:
+            result /= Fs
+            # Scale the spectrum by the norm of the window to compensate for
+            # windowing loss; see Bendat & Piersol Sec 11.5.2.
+            result /= (np.abs(windowVals)**2).sum()
+        else:
+            # In this case, preserve power in the segment, not amplitude
+            result /= np.abs(windowVals).sum()**2
+
+    t = np.arange(NFFT/2, len(x) - NFFT/2 + 1, NFFT - noverlap)/Fs
+
+    if sides == 'twosided':
         # center the frequency range at zero
-        freqs = np.concatenate((freqs[numFreqs//2:] - Fs, freqs[:numFreqs//2]))
-        Pxy = np.concatenate((Pxy[numFreqs//2:, :], Pxy[:numFreqs//2, :]), 0)
+        freqs = np.concatenate((freqs[freqcenter:], freqs[:freqcenter]))
+        result = np.concatenate((result[freqcenter:, :],
+                                 result[:freqcenter, :]), 0)
+    elif not pad_to % 2:
+        # get the last value correctly, it is negative otherwise
+        freqs[-1] *= -1
 
-    return Pxy, freqs, t
+    # we unwrap the phase here to handle the onesided vs. twosided case
+    if mode == 'phase':
+        result = np.unwrap(result, axis=0)
 
-#Split out these keyword docs so that they can be used elsewhere
-docstring.interpd.update(PSD=cbook.dedent("""
+    return result, freqs, t
+
+
+def _single_spectrum_helper(x, mode, Fs=None, window=None, pad_to=None,
+                            sides=None):
+    '''
+    This is a helper function that implements the commonality between the
+    complex, magnitude, angle, and phase spectrums.
+    It is *NOT* meant to be used outside of mlab and may change at any time.
+    '''
+    if mode is None or mode == 'psd' or mode == 'default':
+        raise ValueError('_single_spectrum_helper does not work with %s mode'
+                         % mode)
+
+    if pad_to is None:
+        pad_to = len(x)
+
+    spec, freqs, _ = _spectral_helper(x=x, y=None, NFFT=len(x), Fs=Fs,
+                                      detrend_func=detrend_none, window=window,
+                                      noverlap=0, pad_to=pad_to,
+                                      sides=sides,
+                                      scale_by_freq=False,
+                                      mode=mode)
+    if mode != 'complex':
+        spec = spec.real
+
+    if len(spec.shape) == 2 and spec.shape[1] == 1:
+        spec = spec[:, 0]
+
+    return spec, freqs
+
+
+# Split out these keyword docs so that they can be used elsewhere
+docstring.interpd.update(Spectral=cbook.dedent("""
     Keyword arguments:
-
-      *NFFT*: integer
-          The number of data points used in each block for the FFT.
-          Must be even; a power 2 is most efficient.  The default value is 256.
-          This should *NOT* be used to get zero padding, or the scaling of the
-          result will be incorrect. Use *pad_to* for this instead.
 
       *Fs*: scalar
           The sampling frequency (samples per time unit).  It is used
           to calculate the Fourier frequencies, freqs, in cycles per time
           unit. The default value is 2.
-
-      *detrend*: callable
-          The function applied to each segment before fft-ing,
-          designed to remove the mean or linear trend.  Unlike in
-          MATLAB, where the *detrend* parameter is a vector, in
-          matplotlib is it a function.  The :mod:`~matplotlib.pylab`
-          module defines :func:`~matplotlib.pylab.detrend_none`,
-          :func:`~matplotlib.pylab.detrend_mean`, and
-          :func:`~matplotlib.pylab.detrend_linear`, but you can use
-          a custom function as well.
 
       *window*: callable or ndarray
           A function or a vector of length *NFFT*. To create window
@@ -331,25 +857,58 @@ docstring.interpd.update(PSD=cbook.dedent("""
           argument, it must take a data segment as an argument and
           return the windowed version of the segment.
 
-      *noverlap*: integer
-          The number of points of overlap between blocks.  The default value
-          is 0 (no overlap).
+      *sides*: [ 'default' | 'onesided' | 'twosided' ]
+          Specifies which sides of the spectrum to return.  Default gives the
+          default behavior, which returns one-sided for real data and both
+          for complex data.  'onesided' forces the return of a one-sided
+          spectrum, while 'twosided' forces two-sided.
+"""))
 
+
+docstring.interpd.update(Single_Spectrum=cbook.dedent("""
+      *pad_to*: integer
+          The number of points to which the data segment is padded when
+          performing the FFT.  While not increasing the actual resolution of
+          the spectrum (the minimum distance between resolvable peaks),
+          this can give more points in the plot, allowing for more
+          detail. This corresponds to the *n* parameter in the call to fft().
+          The default is None, which sets *pad_to* equal to the length of the
+          input signal (i.e. no padding).
+"""))
+
+
+docstring.interpd.update(PSD=cbook.dedent("""
       *pad_to*: integer
           The number of points to which the data segment is padded when
           performing the FFT.  This can be different from *NFFT*, which
           specifies the number of data points used.  While not increasing
-          the actual resolution of the psd (the minimum distance between
+          the actual resolution of the spectrum (the minimum distance between
           resolvable peaks), this can give more points in the plot,
           allowing for more detail. This corresponds to the *n* parameter
           in the call to fft(). The default is None, which sets *pad_to*
           equal to *NFFT*
 
-      *sides*: [ 'default' | 'onesided' | 'twosided' ]
-          Specifies which sides of the PSD to return.  Default gives the
-          default behavior, which returns one-sided for real data and both
-          for complex data.  'onesided' forces the return of a one-sided PSD,
-          while 'twosided' forces two-sided.
+      *NFFT*: integer
+          The number of data points used in each block for the FFT.
+          A power 2 is most efficient.  The default value is 256.
+          This should *NOT* be used to get zero padding, or the scaling of the
+          result will be incorrect. Use *pad_to* for this instead.
+
+      *detrend*: [ 'default' | 'constant' | 'mean' | 'linear' | 'none'] or
+                 callable
+
+          The function applied to each segment before fft-ing,
+          designed to remove the mean or linear trend.  Unlike in
+          MATLAB, where the *detrend* parameter is a vector, in
+          matplotlib is it a function.  The :mod:`~matplotlib.pylab`
+          module defines :func:`~matplotlib.pylab.detrend_none`,
+          :func:`~matplotlib.pylab.detrend_mean`, and
+          :func:`~matplotlib.pylab.detrend_linear`, but you can use
+          a custom function as well.  You can also use a string to choose
+          one of the functions.  'default', 'constant', and 'mean' call
+          :func:`~matplotlib.pylab.detrend_mean`.  'linear' calls
+          :func:`~matplotlib.pylab.detrend_linear`.  'none' calls
+          :func:`~matplotlib.pylab.detrend_none`.
 
       *scale_by_freq*: boolean
           Specifies whether the resulting density values should be scaled
@@ -358,94 +917,379 @@ docstring.interpd.update(PSD=cbook.dedent("""
           The default is True for MATLAB compatibility.
 """))
 
+
 @docstring.dedent_interpd
-def psd(x, NFFT=256, Fs=2, detrend=detrend_none, window=window_hanning,
-        noverlap=0, pad_to=None, sides='default', scale_by_freq=None):
+def psd(x, NFFT=None, Fs=None, detrend=None, window=None,
+        noverlap=None, pad_to=None, sides=None, scale_by_freq=None):
     """
-    The power spectral density by Welch's average periodogram method.
-    The vector *x* is divided into *NFFT* length blocks.  Each block
-    is detrended by the function *detrend* and windowed by the function
-    *window*.  *noverlap* gives the length of the overlap between blocks.
-    The absolute(fft(block))**2 of each segment are averaged to compute
-    *Pxx*, with a scaling to correct for power loss due to windowing.
+    Compute the power spectral density.
+
+    Call signature::
+
+        psd(x, NFFT=256, Fs=2, detrend=mlab.detrend_none,
+            window=mlab.window_hanning, noverlap=0, pad_to=None,
+            sides='default', scale_by_freq=None)
+
+    The power spectral density :math:`P_{xx}` by Welch's average
+    periodogram method.  The vector *x* is divided into *NFFT* length
+    segments.  Each segment is detrended by function *detrend* and
+    windowed by function *window*.  *noverlap* gives the length of
+    the overlap between segments.  The :math:`|\mathrm{fft}(i)|^2`
+    of each segment :math:`i` are averaged to compute :math:`P_{xx}`.
 
     If len(*x*) < *NFFT*, it will be zero padded to *NFFT*.
 
-    *x*
+      *x*: 1-D array or sequence
         Array or sequence containing the data
+
+    %(Spectral)s
 
     %(PSD)s
 
+        *noverlap*: integer
+        The number of points of overlap between segments.
+        The default value is 0 (no overlap).
+
     Returns the tuple (*Pxx*, *freqs*).
+
+          *Pxx*: 1-D array
+            The values for the power spectrum `P_{xx}` (real valued)
+
+          *freqs*: 1-D array
+            The frequencies corresponding to the elements in *Pxx*
 
     Refs:
 
         Bendat & Piersol -- Random Data: Analysis and Measurement
         Procedures, John Wiley & Sons (1986)
 
+    .. seealso::
+
+        :func:`specgram`
+            :func:`specgram` differs in the default overlap; in not returning
+            the mean of the segment periodograms; and in returning the
+            times of the segments.
+
+        :func:`magnitude_spectrum`
+            :func:`magnitude_spectrum` returns the magnitude spectrum.
+
+        :func:`csd`
+            :func:`csd` returns the spectral density between two signals.
     """
-    Pxx,freqs = csd(x, x, NFFT, Fs, detrend, window, noverlap, pad_to, sides,
-        scale_by_freq)
-    return Pxx.real,freqs
+    Pxx, freqs = csd(x=x, y=None, NFFT=NFFT, Fs=Fs, detrend=detrend,
+                     window=window, noverlap=noverlap, pad_to=pad_to,
+                     sides=sides, scale_by_freq=scale_by_freq)
+    return Pxx.real, freqs
+
 
 @docstring.dedent_interpd
-def csd(x, y, NFFT=256, Fs=2, detrend=detrend_none, window=window_hanning,
-        noverlap=0, pad_to=None, sides='default', scale_by_freq=None):
+def csd(x, y, NFFT=None, Fs=None, detrend=None, window=None,
+        noverlap=None, pad_to=None, sides=None, scale_by_freq=None):
     """
-    The cross power spectral density by Welch's average periodogram
-    method.  The vectors *x* and *y* are divided into *NFFT* length
-    blocks.  Each block is detrended by the function *detrend* and
-    windowed by the function *window*.  *noverlap* gives the length
-    of the overlap between blocks.  The product of the direct FFTs
-    of *x* and *y* are averaged over each segment to compute *Pxy*,
-    with a scaling to correct for power loss due to windowing.
+    Compute the cross-spectral density.
+
+    Call signature::
+
+        csd(x, y, NFFT=256, Fs=2, detrend=mlab.detrend_none,
+            window=mlab.window_hanning, noverlap=0, pad_to=None,
+            sides='default', scale_by_freq=None)
+
+    The cross spectral density :math:`P_{xy}` by Welch's average
+    periodogram method.  The vectors *x* and *y* are divided into
+    *NFFT* length segments.  Each segment is detrended by function
+    *detrend* and windowed by function *window*.  *noverlap* gives
+    the length of the overlap between segments.  The product of
+    the direct FFTs of *x* and *y* are averaged over each segment
+    to compute :math:`P_{xy}`, with a scaling to correct for power
+    loss due to windowing.
 
     If len(*x*) < *NFFT* or len(*y*) < *NFFT*, they will be zero
     padded to *NFFT*.
 
-    *x*, *y*
-        Array or sequence containing the data
+      *x*, *y*: 1-D arrays or sequences
+        Arrays or sequences containing the data
+
+    %(Spectral)s
 
     %(PSD)s
 
-    Returns the tuple (*Pxy*, *freqs*).
+      *noverlap*: integer
+          The number of points of overlap between segments.
+          The default value is 0 (no overlap).
+
+    Returns the tuple (*Pxy*, *freqs*):
+
+          *Pxy*: 1-D array
+            The values for the cross spectrum `P_{xy}` before scaling
+            (real valued)
+
+          *freqs*: 1-D array
+            The frequencies corresponding to the elements in *Pxy*
 
     Refs:
         Bendat & Piersol -- Random Data: Analysis and Measurement
         Procedures, John Wiley & Sons (1986)
-    """
-    Pxy, freqs, t = _spectral_helper(x, y, NFFT, Fs, detrend, window,
-        noverlap, pad_to, sides, scale_by_freq)
 
-    if len(Pxy.shape) == 2 and Pxy.shape[1]>1:
-        Pxy = Pxy.mean(axis=1)
+    .. seealso::
+
+        :func:`psd`
+            :func:`psd` is the equivalent to setting y=x.
+    """
+    if NFFT is None:
+        NFFT = 256
+    Pxy, freqs, _ = _spectral_helper(x=x, y=y, NFFT=NFFT, Fs=Fs,
+                                     detrend_func=detrend, window=window,
+                                     noverlap=noverlap, pad_to=pad_to,
+                                     sides=sides, scale_by_freq=scale_by_freq,
+                                     mode='psd')
+
+    if len(Pxy.shape) == 2:
+        if Pxy.shape[1] > 1:
+            Pxy = Pxy.mean(axis=1)
+        else:
+            Pxy = Pxy[:, 0]
     return Pxy, freqs
 
-@docstring.dedent_interpd
-def specgram(x, NFFT=256, Fs=2, detrend=detrend_none, window=window_hanning,
-        noverlap=128, pad_to=None, sides='default', scale_by_freq=None):
-    """
-    Compute a spectrogram of data in *x*.  Data are split into *NFFT*
-    length segments and the PSD of each section is computed.  The
-    windowing function *window* is applied to each segment, and the
-    amount of overlap of each segment is specified with *noverlap*.
 
-    If *x* is real (i.e. non-complex) only the spectrum of the positive
-    frequencie is returned.  If *x* is complex then the complete
-    spectrum is returned.
+@docstring.dedent_interpd
+def complex_spectrum(x, Fs=None, window=None, pad_to=None,
+                     sides=None):
+    """
+    Compute the complex-valued frequency spectrum of *x*.  Data is padded to a
+    length of *pad_to* and the windowing function *window* is applied to the
+    signal.
+
+      *x*: 1-D array or sequence
+        Array or sequence containing the data
+
+    %(Spectral)s
+
+    %(Single_Spectrum)s
+
+    Returns the tuple (*spectrum*, *freqs*):
+
+      *spectrum*: 1-D array
+        The values for the complex spectrum (complex valued)
+
+      *freqs*: 1-D array
+        The frequencies corresponding to the elements in *spectrum*
+
+    .. seealso::
+
+        :func:`magnitude_spectrum`
+            :func:`magnitude_spectrum` returns the absolute value of this
+            function.
+
+        :func:`angle_spectrum`
+            :func:`angle_spectrum` returns the angle of this
+            function.
+
+        :func:`phase_spectrum`
+            :func:`phase_spectrum` returns the phase (unwrapped angle) of this
+            function.
+
+        :func:`specgram`
+            :func:`specgram` can return the complex spectrum of segments
+            within the signal.
+    """
+    return _single_spectrum_helper(x=x, Fs=Fs, window=window, pad_to=pad_to,
+                                   sides=sides, mode='complex')
+
+
+@docstring.dedent_interpd
+def magnitude_spectrum(x, Fs=None, window=None, pad_to=None,
+                       sides=None):
+    """
+    Compute the magnitude (absolute value) of the frequency spectrum of
+    *x*.  Data is padded to a length of *pad_to* and the windowing function
+    *window* is applied to the signal.
+
+      *x*: 1-D array or sequence
+        Array or sequence containing the data
+
+    %(Spectral)s
+
+    %(Single_Spectrum)s
+
+    Returns the tuple (*spectrum*, *freqs*):
+
+      *spectrum*: 1-D array
+        The values for the magnitude spectrum (real valued)
+
+      *freqs*: 1-D array
+        The frequencies corresponding to the elements in *spectrum*
+
+    .. seealso::
+
+        :func:`psd`
+            :func:`psd` returns the power spectral density.
+
+        :func:`complex_spectrum`
+            This function returns the absolute value of
+            :func:`complex_spectrum`.
+
+        :func:`angle_spectrum`
+            :func:`angle_spectrum` returns the angles of the corresponding
+            frequencies.
+
+        :func:`phase_spectrum`
+            :func:`phase_spectrum` returns the phase (unwrapped angle) of the
+            corresponding frequencies.
+
+        :func:`specgram`
+            :func:`specgram` can return the magnitude spectrum of segments
+            within the signal.
+    """
+    return _single_spectrum_helper(x=x, Fs=Fs, window=window, pad_to=pad_to,
+                                   sides=sides, mode='magnitude')
+
+
+@docstring.dedent_interpd
+def angle_spectrum(x, Fs=None, window=None, pad_to=None,
+                   sides=None):
+    """
+    Compute the angle of the frequency spectrum (wrapped phase spectrum) of
+    *x*.  Data is padded to a length of *pad_to* and the windowing function
+    *window* is applied to the signal.
+
+      *x*: 1-D array or sequence
+        Array or sequence containing the data
+
+    %(Spectral)s
+
+    %(Single_Spectrum)s
+
+    Returns the tuple (*spectrum*, *freqs*):
+
+      *spectrum*: 1-D array
+        The values for the angle spectrum in radians (real valued)
+
+      *freqs*: 1-D array
+        The frequencies corresponding to the elements in *spectrum*
+
+    .. seealso::
+
+        :func:`complex_spectrum`
+            This function returns the angle value of
+            :func:`complex_spectrum`.
+
+        :func:`magnitude_spectrum`
+            :func:`angle_spectrum` returns the magnitudes of the
+            corresponding frequencies.
+
+        :func:`phase_spectrum`
+            :func:`phase_spectrum` returns the unwrapped version of this
+            function.
+
+        :func:`specgram`
+            :func:`specgram` can return the angle spectrum of segments
+            within the signal.
+    """
+    return _single_spectrum_helper(x=x, Fs=Fs, window=window, pad_to=pad_to,
+                                   sides=sides, mode='angle')
+
+
+@docstring.dedent_interpd
+def phase_spectrum(x, Fs=None, window=None, pad_to=None,
+                   sides=None):
+    """
+    Compute the phase of the frequency spectrum (unwrapped angle spectrum) of
+    *x*.  Data is padded to a length of *pad_to* and the windowing function
+    *window* is applied to the signal.
+
+      *x*: 1-D array or sequence
+        Array or sequence containing the data
+
+    %(Spectral)s
+
+    %(Single_Spectrum)s
+
+    Returns the tuple (*spectrum*, *freqs*):
+
+      *spectrum*: 1-D array
+        The values for the phase spectrum in radians (real valued)
+
+      *freqs*: 1-D array
+        The frequencies corresponding to the elements in *spectrum*
+
+    .. seealso::
+
+        :func:`complex_spectrum`
+            This function returns the angle value of
+            :func:`complex_spectrum`.
+
+        :func:`magnitude_spectrum`
+            :func:`magnitude_spectrum` returns the magnitudes of the
+            corresponding frequencies.
+
+        :func:`angle_spectrum`
+            :func:`angle_spectrum` returns the wrapped version of this
+            function.
+
+        :func:`specgram`
+            :func:`specgram` can return the phase spectrum of segments
+            within the signal.
+    """
+    return _single_spectrum_helper(x=x, Fs=Fs, window=window, pad_to=pad_to,
+                                   sides=sides, mode='phase')
+
+
+@docstring.dedent_interpd
+def specgram(x, NFFT=None, Fs=None, detrend=None, window=None,
+             noverlap=None, pad_to=None, sides=None, scale_by_freq=None,
+             mode=None):
+    """
+    Compute a spectrogram.
+
+    Call signature::
+
+        specgram(x, NFFT=256, Fs=2,detrend=mlab.detrend_none,
+                window=mlab.window_hanning, noverlap=128,
+                cmap=None, xextent=None, pad_to=None, sides='default',
+                scale_by_freq=None, mode='default')
+
+    Compute and plot a spectrogram of data in *x*.  Data are split into
+    *NFFT* length segments and the spectrum of each section is
+    computed.  The windowing function *window* is applied to each
+    segment, and the amount of overlap of each segment is
+    specified with *noverlap*.
+
+      *x*: 1-D array or sequence
+        Array or sequence containing the data
+
+    %(Spectral)s
 
     %(PSD)s
 
-    Returns a tuple (*Pxx*, *freqs*, *t*):
+      *mode*: [ 'default' | 'psd' | 'complex' | 'magnitude'
+                'angle' | 'phase' ]
 
-         - *Pxx*: 2-D array, columns are the periodograms of
-           successive segments
+          What sort of spectrum to use.  Default is 'psd'. which takes the
+          power spectral density.  'complex' returns the complex-valued
+          frequency spectrum.  'magnitude' returns the magnitude spectrum.
+          'angle' returns the phase spectrum without unwrapping.  'phase'
+          returns the phase spectrum with unwrapping.
 
-         - *freqs*: 1-D array of frequencies corresponding to the rows
-           in Pxx
+      *noverlap*: integer
+          The number of points of overlap between blocks.  The default value
+          is 128.
 
-         - *t*: 1-D array of times corresponding to midpoints of
-           segments.
+    Returns the tuple (*spectrum*, *freqs*, *t*):
+
+      *spectrum*: 2-D array
+        columns are the periodograms of successive segments
+
+      *freqs*: 1-D array
+        The frequencies corresponding to the rows in *spectrum*
+
+      *t*: 1-D array
+        The times corresponding to midpoints of segments (i.e the columns
+        in *spectrum*).
+
+    .. note::
+
+        *detrend* and *scale_by_freq* only apply when *mode* is set to
+        'psd'
 
     .. seealso::
 
@@ -453,21 +1297,47 @@ def specgram(x, NFFT=256, Fs=2, detrend=detrend_none, window=window_hanning,
             :func:`psd` differs in the default overlap; in returning
             the mean of the segment periodograms; and in not returning
             times.
+
+        :func:`complex_spectrum`
+            A single spectrum, similar to having a single segment when
+            *mode* is 'complex'.
+
+        :func:`magnitude_spectrum`
+            A single spectrum, similar to having a single segment when
+            *mode* is 'magnitude'.
+
+        :func:`angle_spectrum`
+            A single spectrum, similar to having a single segment when
+            *mode* is 'angle'.
+
+        :func:`phase_spectrum`
+            A single spectrum, similar to having a single segment when
+            *mode* is 'phase'.
     """
-    assert(NFFT > noverlap)
+    if noverlap is None:
+        noverlap = 128
 
-    Pxx, freqs, t = _spectral_helper(x, x, NFFT, Fs, detrend, window,
-        noverlap, pad_to, sides, scale_by_freq)
-    Pxx = Pxx.real #Needed since helper implements generically
+    spec, freqs, t = _spectral_helper(x=x, y=None, NFFT=NFFT, Fs=Fs,
+                                      detrend_func=detrend, window=window,
+                                      noverlap=noverlap, pad_to=pad_to,
+                                      sides=sides,
+                                      scale_by_freq=scale_by_freq,
+                                      mode=mode)
 
-    return Pxx, freqs, t
+    if mode != 'complex':
+        spec = spec.real  # Needed since helper implements generically
+
+    return spec, freqs, t
+
 
 _coh_error = """Coherence is calculated by averaging over *NFFT*
 length segments.  Your signal is too short for your choice of *NFFT*.
 """
+
+
 @docstring.dedent_interpd
 def cohere(x, y, NFFT=256, Fs=2, detrend=detrend_none, window=window_hanning,
-        noverlap=0, pad_to=None, sides='default', scale_by_freq=None):
+           noverlap=0, pad_to=None, sides='default', scale_by_freq=None):
     """
     The coherence between *x* and *y*.  Coherence is the normalized
     cross spectral density:
@@ -479,7 +1349,13 @@ def cohere(x, y, NFFT=256, Fs=2, detrend=detrend_none, window=window_hanning,
     *x*, *y*
         Array or sequence containing the data
 
+    %(Spectral)s
+
     %(PSD)s
+
+      *noverlap*: integer
+          The number of points of overlap between blocks.  The default value
+          is 0 (no overlap).
 
     The return value is the tuple (*Cxy*, *f*), where *f* are the
     frequencies of the coherence vector. For cohere, scaling the
@@ -493,14 +1369,14 @@ def cohere(x, y, NFFT=256, Fs=2, detrend=detrend_none, window=window_hanning,
             :math:`P_{xy}`, :math:`P_{xx}` and :math:`P_{yy}`.
     """
 
-    if len(x)<2*NFFT:
+    if len(x) < 2 * NFFT:
         raise ValueError(_coh_error)
     Pxx, f = psd(x, NFFT, Fs, detrend, window, noverlap, pad_to, sides,
-        scale_by_freq)
+                 scale_by_freq)
     Pyy, f = psd(y, NFFT, Fs, detrend, window, noverlap, pad_to, sides,
-        scale_by_freq)
+                 scale_by_freq)
     Pxy, f = csd(x, y, NFFT, Fs, detrend, window, noverlap, pad_to, sides,
-        scale_by_freq)
+                 scale_by_freq)
 
     Cxy = np.divide(np.absolute(Pxy)**2, Pxx*Pyy)
     Cxy.shape = (len(f),)
@@ -510,13 +1386,14 @@ def cohere(x, y, NFFT=256, Fs=2, detrend=detrend_none, window=window_hanning,
 def donothing_callback(*args):
     pass
 
-def cohere_pairs( X, ij, NFFT=256, Fs=2, detrend=detrend_none,
-                  window=window_hanning, noverlap=0,
-                  preferSpeedOverMemory=True,
-                  progressCallback=donothing_callback,
-                  returnPxx=False):
 
-    u"""
+def cohere_pairs(X, ij, NFFT=256, Fs=2, detrend=detrend_none,
+                 window=window_hanning, noverlap=0,
+                 preferSpeedOverMemory=True,
+                 progressCallback=donothing_callback,
+                 returnPxx=False):
+
+    """
     Call signature::
 
       Cxy, Phase, freqs = cohere_pairs( X, ij, ...)
@@ -556,7 +1433,7 @@ def cohere_pairs( X, ij, NFFT=256, Fs=2, detrend=detrend_none,
     where:
 
       - *Cxy*: dictionary of (*i*, *j*) tuples -> coherence vector for
-        that pair.  I.e., ``Cxy[(i,j) = cohere(X[:,i], X[:,j])``.
+        that pair.  i.e., ``Cxy[(i,j) = cohere(X[:,i], X[:,j])``.
         Number of dictionary keys is ``len(ij)``.
 
       - *Phase*: dictionary of phases of the cross spectral density at
@@ -565,7 +1442,7 @@ def cohere_pairs( X, ij, NFFT=256, Fs=2, detrend=detrend_none,
       - *freqs*: vector of frequencies, equal in length to either the
          coherence or phase vectors for any (*i*, *j*) key.
 
-    Eg., to make a coherence Bode plot::
+    e.g., to make a coherence Bode plot::
 
           subplot(211)
           plot( freqs, Cxy[(12,19)])
@@ -596,31 +1473,35 @@ def cohere_pairs( X, ij, NFFT=256, Fs=2, detrend=detrend_none,
     # zero pad if X is too short
     if numRows < NFFT:
         tmp = X
-        X = np.zeros( (NFFT, numCols), X.dtype)
-        X[:numRows,:] = tmp
+        X = np.zeros((NFFT, numCols), X.dtype)
+        X[:numRows, :] = tmp
         del tmp
 
     numRows, numCols = X.shape
     # get all the columns of X that we are interested in by checking
     # the ij tuples
     allColumns = set()
-    for i,j in ij:
-        allColumns.add(i); allColumns.add(j)
+    for i, j in ij:
+        allColumns.add(i)
+        allColumns.add(j)
     Ncols = len(allColumns)
 
     # for real X, ignore the negative frequencies
-    if np.iscomplexobj(X): numFreqs = NFFT
-    else: numFreqs = NFFT//2+1
+    if np.iscomplexobj(X):
+        numFreqs = NFFT
+    else:
+        numFreqs = NFFT//2+1
 
     # cache the FFT of every windowed, detrended NFFT length segement
     # of every channel.  If preferSpeedOverMemory, cache the conjugate
     # as well
     if cbook.iterable(window):
-        assert(len(window) == NFFT)
+        if len(window) != NFFT:
+            raise ValueError("The length of the window must be equal to NFFT")
         windowVals = window
     else:
         windowVals = window(np.ones(NFFT, X.dtype))
-    ind = range(0, numRows-NFFT+1, NFFT-noverlap)
+    ind = list(xrange(0, numRows-NFFT+1, NFFT-noverlap))
     numSlices = len(ind)
     FFTSlices = {}
     FFTConjSlices = {}
@@ -629,11 +1510,11 @@ def cohere_pairs( X, ij, NFFT=256, Fs=2, detrend=detrend_none,
     normVal = np.linalg.norm(windowVals)**2
     for iCol in allColumns:
         progressCallback(i/Ncols, 'Cacheing FFTs')
-        Slices = np.zeros( (numSlices,numFreqs), dtype=np.complex_)
+        Slices = np.zeros((numSlices, numFreqs), dtype=np.complex_)
         for iSlice in slices:
             thisSlice = X[ind[iSlice]:ind[iSlice]+NFFT, iCol]
             thisSlice = windowVals*detrend(thisSlice)
-            Slices[iSlice,:] = np.fft.fft(thisSlice)[:numFreqs]
+            Slices[iSlice, :] = np.fft.fft(thisSlice)[:numFreqs]
 
         FFTSlices[iCol] = Slices
         if preferSpeedOverMemory:
@@ -647,21 +1528,22 @@ def cohere_pairs( X, ij, NFFT=256, Fs=2, detrend=detrend_none,
     Phase = {}
     count = 0
     N = len(ij)
-    for i,j in ij:
-        count +=1
-        if count%10==0:
+    for i, j in ij:
+        count += 1
+        if count % 10 == 0:
             progressCallback(count/N, 'Computing coherences')
 
         if preferSpeedOverMemory:
             Pxy = FFTSlices[i] * FFTConjSlices[j]
         else:
             Pxy = FFTSlices[i] * np.conjugate(FFTSlices[j])
-        if numSlices>1: Pxy = np.mean(Pxy, axis=0)
-        #Pxy = np.divide(Pxy, normVal)
+        if numSlices > 1:
+            Pxy = np.mean(Pxy, axis=0)
+#       Pxy = np.divide(Pxy, normVal)
         Pxy /= normVal
-        #Cxy[(i,j)] = np.divide(np.absolute(Pxy)**2, Pxx[i]*Pxx[j])
-        Cxy[i,j] = abs(Pxy)**2 / (Pxx[i]*Pxx[j])
-        Phase[i,j] =  np.arctan2(Pxy.imag, Pxy.real)
+#       Cxy[(i,j)] = np.divide(np.absolute(Pxy)**2, Pxx[i]*Pxx[j])
+        Cxy[i, j] = abs(Pxy)**2 / (Pxx[i]*Pxx[j])
+        Phase[i, j] = np.arctan2(Pxy.imag, Pxy.real)
 
     freqs = Fs/NFFT*np.arange(numFreqs)
     if returnPxx:
@@ -669,13 +1551,14 @@ def cohere_pairs( X, ij, NFFT=256, Fs=2, detrend=detrend_none,
     else:
         return Cxy, Phase, freqs
 
+
 def entropy(y, bins):
     r"""
-    Return the entropy of the data in *y*.
+    Return the entropy of the data in *y* in units of nat.
 
     .. math::
 
-      \sum p_i \log_2(p_i)
+      -\sum p_i \ln(p_i)
 
     where :math:`p_i` is the probability of observing *y* in the
     :math:`i^{th}` bin of *bins*.  *bins* can be a number of bins or a
@@ -686,46 +1569,22 @@ def entropy(y, bins):
       x = mu + sigma * randn(200000)
       Sanalytic = 0.5 * ( 1.0 + log(2*pi*sigma**2.0) )
     """
-    n,bins = np.histogram(y, bins)
+    n, bins = np.histogram(y, bins)
     n = n.astype(np.float_)
 
     n = np.take(n, np.nonzero(n)[0])         # get the positive
 
     p = np.divide(n, len(y))
 
-    delta = bins[1]-bins[0]
-    S = -1.0*np.sum(p*log(p)) + log(delta)
-    #S = -1.0*np.sum(p*log(p))
+    delta = bins[1] - bins[0]
+    S = -1.0 * np.sum(p * np.log(p)) + np.log(delta)
     return S
+
 
 def normpdf(x, *args):
     "Return the normal pdf evaluated at *x*; args provides *mu*, *sigma*"
     mu, sigma = args
     return 1./(np.sqrt(2*np.pi)*sigma)*np.exp(-0.5 * (1./sigma*(x - mu))**2)
-
-
-def levypdf(x, gamma, alpha):
-    "Returm the levy pdf evaluated at *x* for params *gamma*, *alpha*"
-
-    N = len(x)
-
-    if N%2 != 0:
-        raise ValueError, 'x must be an event length array; try\n' + \
-              'x = np.linspace(minx, maxx, N), where N is even'
-
-
-    dx = x[1]-x[0]
-
-
-    f = 1/(N*dx)*np.arange(-N/2, N/2, np.float_)
-
-    ind = np.concatenate([np.arange(N/2, N, int),
-                           np.arange(0, N/2, int)])
-    df = f[1]-f[0]
-    cfl = exp(-gamma*np.absolute(2*pi*f)**alpha)
-
-    px = np.fft.fft(np.take(cfl,ind)*df).astype(np.float_)
-    return np.take(px, ind)
 
 
 def find(condition):
@@ -741,68 +1600,33 @@ def longest_contiguous_ones(x):
     equally long stretches, pick the first.
     """
     x = np.ravel(x)
-    if len(x)==0:
+    if len(x) == 0:
         return np.array([])
 
-    ind = (x==0).nonzero()[0]
-    if len(ind)==0:
+    ind = (x == 0).nonzero()[0]
+    if len(ind) == 0:
         return np.arange(len(x))
-    if len(ind)==len(x):
+    if len(ind) == len(x):
         return np.array([])
 
-    y = np.zeros( (len(x)+2,), x.dtype)
+    y = np.zeros((len(x)+2,), x.dtype)
     y[1:-1] = x
     dif = np.diff(y)
-    up = (dif ==  1).nonzero()[0];
-    dn = (dif == -1).nonzero()[0];
+    up = (dif == 1).nonzero()[0]
+    dn = (dif == -1).nonzero()[0]
     i = (dn-up == max(dn - up)).nonzero()[0][0]
     ind = np.arange(up[i], dn[i])
 
     return ind
 
+
 def longest_ones(x):
     '''alias for longest_contiguous_ones'''
     return longest_contiguous_ones(x)
 
-def prepca(P, frac=0):
-    """
 
-    WARNING: this function is deprecated -- please see class PCA instead
-
-    Compute the principal components of *P*.  *P* is a (*numVars*,
-    *numObs*) array.  *frac* is the minimum fraction of variance that a
-    component must contain to be included.
-
-    Return value is a tuple of the form (*Pcomponents*, *Trans*,
-    *fracVar*) where:
-
-      - *Pcomponents* : a (numVars, numObs) array
-
-      - *Trans* : the weights matrix, ie, *Pcomponents* = *Trans* *
-         *P*
-
-      - *fracVar* : the fraction of the variance accounted for by each
-         component returned
-
-    A similar function of the same name was in the MATLAB
-    R13 Neural Network Toolbox but is not found in later versions;
-    its successor seems to be called "processpcs".
-    """
-    warnings.warn('This function is deprecated -- see class PCA instead')
-    U,s,v = np.linalg.svd(P)
-    varEach = s**2/P.shape[1]
-    totVar = varEach.sum()
-    fracVar = varEach/totVar
-    ind = slice((fracVar>=frac).sum())
-    # select the components that are greater
-    Trans = U[:,ind].transpose()
-    # The transformed data
-    Pcomponents = np.dot(Trans,P)
-    return Pcomponents, Trans, fracVar[ind]
-
-
-class PCA:
-    def __init__(self, a):
+class PCA(object):
+    def __init__(self, a, standardize=True):
         """
         compute the SVD of a and store data for PCA.  Use project to
         project the data onto a reduced set of dimensions
@@ -810,6 +1634,8 @@ class PCA:
         Inputs:
 
           *a*: a numobservations x numdims array
+          *standardize*: True if input data are to be standardized. If False,
+          only centering will be carried out.
 
         Attrs:
 
@@ -817,28 +1643,36 @@ class PCA:
 
           *numrows*, *numcols*: the dimensions of a
 
-          *mu* : a numdims array of means of a
+          *mu*: a numdims array of means of a. This is the vector that points
+          to the origin of PCA space.
 
-          *sigma* : a numdims array of atandard deviation of a
+          *sigma*: a numdims array of standard deviation of a
 
-          *fracs* : the proportion of variance of each of the principal components
+          *fracs*: the proportion of variance of each of the principal
+          components
 
-          *Wt* : the weight vector for projecting a numdims point or array into PCA space
+          *s*: the actual eigenvalues of the decomposition
 
-          *Y* : a projected into PCA space
+          *Wt*: the weight vector for projecting a numdims point or array into
+          PCA space
+
+          *Y*: a projected into PCA space
 
 
-        The factor loadings are in the Wt factor, ie the factor
-        loadings for the 1st principal component are given by Wt[0]
+        The factor loadings are in the Wt factor, i.e., the factor
+        loadings for the 1st principal component are given by Wt[0].
+        This row is also the 1st eigenvector.
 
         """
         n, m = a.shape
-        if n<m:
-            raise RuntimeError('we assume data in a is organized with numrows>numcols')
+        if n < m:
+            raise RuntimeError('we assume data in a is organized with '
+                               'numrows>numcols')
 
         self.numrows, self.numcols = n, m
         self.mu = a.mean(axis=0)
         self.sigma = a.std(axis=0)
+        self.standardize = standardize
 
         a = self.center(a)
 
@@ -846,63 +1680,81 @@ class PCA:
 
         U, s, Vh = np.linalg.svd(a, full_matrices=False)
 
+        # Note: .H indicates the conjugate transposed / Hermitian.
 
-        Y = np.dot(Vh, a.T).T
+        # The SVD is commonly written as a = U s V.H.
+        # If U is a unitary matrix, it means that it satisfies U.H = inv(U).
 
-        vars = s**2/float(len(s))
-        self.fracs = vars/vars.sum()
-
+        # The rows of Vh are the eigenvectors of a.H a.
+        # The columns of U are the eigenvectors of a a.H.
+        # For row i in Vh and column i in U, the corresponding eigenvalue is
+        # s[i]**2.
 
         self.Wt = Vh
+
+        # save the transposed coordinates
+        Y = np.dot(Vh, a.T).T
         self.Y = Y
 
+        # save the eigenvalues
+        self.s = s**2
+
+        # and now the contribution of the individual components
+        vars = self.s/float(len(s))
+        self.fracs = vars/vars.sum()
 
     def project(self, x, minfrac=0.):
-        'project x onto the principle axes, dropping any axes where fraction of variance<minfrac'
+        '''
+        project x onto the principle axes, dropping any axes where fraction
+        of variance<minfrac
+        '''
         x = np.asarray(x)
 
         ndims = len(x.shape)
 
-        if (x.shape[-1]!=self.numcols):
-            raise ValueError('Expected an array with dims[-1]==%d'%self.numcols)
-
+        if (x.shape[-1] != self.numcols):
+            raise ValueError('Expected an array with dims[-1]==%d' %
+                             self.numcols)
 
         Y = np.dot(self.Wt, self.center(x).T).T
-        mask = self.fracs>=minfrac
-        if ndims==2:
-            Yreduced = Y[:,mask]
+        mask = self.fracs >= minfrac
+        if ndims == 2:
+            Yreduced = Y[:, mask]
         else:
             Yreduced = Y[mask]
         return Yreduced
 
-
-
     def center(self, x):
-        'center the data using the mean and sigma from training set a'
-        return (x - self.mu)/self.sigma
-
-
+        '''
+        center and optionally standardize the data using the mean and sigma
+        from training set a
+        '''
+        if self.standardize:
+            return (x - self.mu)/self.sigma
+        else:
+            return (x - self.mu)
 
     @staticmethod
     def _get_colinear():
         c0 = np.array([
-            0.19294738,  0.6202667 ,  0.45962655,  0.07608613,  0.135818  ,
+            0.19294738,  0.6202667,   0.45962655,  0.07608613,  0.135818,
             0.83580842,  0.07218851,  0.48318321,  0.84472463,  0.18348462,
             0.81585306,  0.96923926,  0.12835919,  0.35075355,  0.15807861,
-            0.837437  ,  0.10824303,  0.1723387 ,  0.43926494,  0.83705486])
+            0.837437,    0.10824303,  0.1723387,   0.43926494,  0.83705486])
 
         c1 = np.array([
-            -1.17705601, -0.513883  , -0.26614584,  0.88067144,  1.00474954,
-            -1.1616545 ,  0.0266109 ,  0.38227157,  1.80489433,  0.21472396,
+            -1.17705601, -0.513883,   -0.26614584,  0.88067144,  1.00474954,
+            -1.1616545,   0.0266109,   0.38227157,  1.80489433,  0.21472396,
             -1.41920399, -2.08158544, -0.10559009,  1.68999268,  0.34847107,
-            -0.4685737 ,  1.23980423, -0.14638744, -0.35907697,  0.22442616])
+            -0.4685737,   1.23980423, -0.14638744, -0.35907697,  0.22442616])
 
         c2 = c0 + 2*c1
         c3 = -3*c0 + 4*c1
         a = np.array([c3, c0, c1, c2]).T
         return a
 
-def prctile(x, p = (0.0, 25.0, 50.0, 75.0, 100.0)):
+
+def prctile(x, p=(0.0, 25.0, 50.0, 75.0, 100.0)):
     """
     Return the percentiles of *x*.  *p* can either be a sequence of
     percentile values or a scalar.  If *p* is a sequence, the ith
@@ -925,7 +1777,7 @@ def prctile(x, p = (0.0, 25.0, 50.0, 75.0, 100.0)):
     values = np.array(x).ravel()  # copy
     values.sort()
 
-    idxs = per /100. * (values.shape[0] - 1)
+    idxs = per/100. * (values.shape[0] - 1)
     ai = idxs.astype(np.int)
     bi = ai + 1
     frac = idxs % 1
@@ -942,12 +1794,13 @@ def prctile(x, p = (0.0, 25.0, 50.0, 75.0, 100.0)):
         bi[cond] -= 1
         frac[cond] += 1
 
-    return _interpolate(values[ai],values[bi],frac)
+    return _interpolate(values[ai], values[bi], frac)
+
 
 def prctile_rank(x, p):
     """
     Return the rank for each element in *x*, return the rank
-    0..len(*p*).  Eg if *p* = (25, 50, 75), the return value will be a
+    0..len(*p*).  e.g., if *p* = (25, 50, 75), the return value will be a
     len(*x*) array with values in [0,1,2,3] where 0 indicates the
     value is less than the 25th percentile, 1 indicates the value is
     >= the 25th and < 50th percentile, ... and 3 indicates the value
@@ -962,11 +1815,12 @@ def prctile_rank(x, p):
     else:
         p = np.asarray(p)
 
-    if p.max()<=1 or p.min()<0 or p.max()>100:
+    if p.max() <= 1 or p.min() < 0 or p.max() > 100:
         raise ValueError('percentiles should be in range 0..100, not 0..1')
 
     ptiles = prctile(x, p)
     return np.searchsorted(ptiles, x)
+
 
 def center_matrix(M, dim=0):
     """
@@ -979,10 +1833,9 @@ def center_matrix(M, dim=0):
     if dim:
         M = (M - M.mean(axis=0)) / M.std(axis=0)
     else:
-        M = (M - M.mean(axis=1)[:,np.newaxis])
-        M = M / M.std(axis=1)[:,np.newaxis]
+        M = (M - M.mean(axis=1)[:, np.newaxis])
+        M = M / M.std(axis=1)[:, np.newaxis]
     return M
-
 
 
 def rk4(derivs, y0, t):
@@ -1031,12 +1884,12 @@ def rk4(derivs, y0, t):
     scipy.integrate tools rather than this function.
     """
 
-    try: Ny = len(y0)
+    try:
+        Ny = len(y0)
     except TypeError:
-        yout = np.zeros( (len(t),), np.float_)
+        yout = np.zeros((len(t),), np.float_)
     else:
-        yout = np.zeros( (len(t), Ny), np.float_)
-
+        yout = np.zeros((len(t), Ny), np.float_)
 
     yout[0] = y0
     i = 0
@@ -1071,7 +1924,8 @@ def bivariate_normal(X, Y, sigmax=1.0, sigmay=1.0,
     rho = sigmaxy/(sigmax*sigmay)
     z = Xmu**2/sigmax**2 + Ymu**2/sigmay**2 - 2*rho*Xmu*Ymu/(sigmax*sigmay)
     denom = 2*np.pi*sigmax*sigmay*np.sqrt(1-rho**2)
-    return np.exp( -z/(2*(1-rho**2))) / denom
+    return np.exp(-z/(2*(1-rho**2))) / denom
+
 
 def get_xyz_where(Z, Cond):
     """
@@ -1081,27 +1935,30 @@ def get_xyz_where(Z, Cond):
     *z* are the values of *Z* at those indices.  *x*, *y*, and *z* are
     1D arrays.
     """
-    X,Y = np.indices(Z.shape)
+    X, Y = np.indices(Z.shape)
     return X[Cond], Y[Cond], Z[Cond]
 
-def get_sparse_matrix(M,N,frac=0.1):
+
+def get_sparse_matrix(M, N, frac=0.1):
     """
     Return a *M* x *N* sparse matrix with *frac* elements randomly
     filled.
     """
-    data = np.zeros((M,N))*0.
+    data = np.zeros((M, N))*0.
     for i in range(int(M*N*frac)):
-        x = np.random.randint(0,M-1)
-        y = np.random.randint(0,N-1)
-        data[x,y] = np.random.rand()
+        x = np.random.randint(0, M-1)
+        y = np.random.randint(0, N-1)
+        data[x, y] = np.random.rand()
     return data
 
-def dist(x,y):
+
+def dist(x, y):
     """
     Return the distance between two points.
     """
     d = x-y
-    return np.sqrt(np.dot(d,d))
+    return np.sqrt(np.dot(d, d))
+
 
 def dist_point_to_segment(p, s0, s1):
     """
@@ -1118,17 +1975,18 @@ def dist_point_to_segment(p, s0, s1):
     v = s1 - s0
     w = p - s0
 
-    c1 = np.dot(w,v);
-    if ( c1 <= 0 ):
-        return dist(p, s0);
+    c1 = np.dot(w, v)
+    if c1 <= 0:
+        return dist(p, s0)
 
-    c2 = np.dot(v,v)
-    if ( c2 <= c1 ):
-        return dist(p, s1);
+    c2 = np.dot(v, v)
+    if c2 <= c1:
+        return dist(p, s1)
 
     b = c1 / c2
-    pb = s0 + b * v;
+    pb = s0 + b * v
     return dist(p, pb)
+
 
 def segments_intersect(s1, s2):
     """
@@ -1161,7 +2019,7 @@ def fftsurr(x, detrend=detrend_none, window=window_none):
     Compute an FFT phase randomized surrogate of *x*.
     """
     if cbook.iterable(window):
-        x=window*detrend(x)
+        x = window*detrend(x)
     else:
         x = window(detrend(x))
     z = np.fft.fft(x)
@@ -1171,134 +2029,7 @@ def fftsurr(x, detrend=detrend_none, window=window_none):
     return np.fft.ifft(z).real
 
 
-def liaupunov(x, fprime):
-    """
-    *x* is a very long trajectory from a map, and *fprime* returns the
-    derivative of *x*.
-
-    This function will be removed from matplotlib.
-
-    Returns :
-    .. math::
-
-        \lambda = \\frac{1}{n}\\sum \\ln|f^'(x_i)|
-
-    .. seealso::
-
-        Lyapunov Exponent
-           Sec 10.5 Strogatz (1994) "Nonlinear Dynamics and Chaos".
-           `Wikipedia article on Lyapunov Exponent
-           <http://en.wikipedia.org/wiki/Lyapunov_exponent>`_.
-
-    .. note::
-        What the function here calculates may not be what you really want;
-        *caveat emptor*.
-
-        It also seems that this function's name is badly misspelled.
-    """
-
-    warnings.warn("This does not belong in matplotlib and will be removed", DeprecationWarning) # 2009/06/13
-
-    return np.mean(np.log(np.absolute(fprime(x))))
-
-class FIFOBuffer:
-    """
-    A FIFO queue to hold incoming *x*, *y* data in a rotating buffer
-    using numpy arrays under the hood.  It is assumed that you will
-    call asarrays much less frequently than you add data to the queue
-    -- otherwise another data structure will be faster.
-
-    This can be used to support plots where data is added from a real
-    time feed and the plot object wants to grab data from the buffer
-    and plot it to screen less freqeuently than the incoming.
-
-    If you set the *dataLim* attr to
-    :class:`~matplotlib.transforms.BBox` (eg
-    :attr:`matplotlib.Axes.dataLim`), the *dataLim* will be updated as
-    new data come in.
-
-    TODO: add a grow method that will extend nmax
-
-    .. note::
-
-      mlab seems like the wrong place for this class.
-    """
-    def __init__(self, nmax):
-        """
-        Buffer up to *nmax* points.
-        """
-        self._xa = np.zeros((nmax,), np.float_)
-        self._ya = np.zeros((nmax,), np.float_)
-        self._xs = np.zeros((nmax,), np.float_)
-        self._ys = np.zeros((nmax,), np.float_)
-        self._ind = 0
-        self._nmax = nmax
-        self.dataLim = None
-        self.callbackd = {}
-
-    def register(self, func, N):
-        """
-        Call *func* every time *N* events are passed; *func* signature
-        is ``func(fifo)``.
-        """
-        self.callbackd.setdefault(N, []).append(func)
-
-    def add(self, x, y):
-        """
-        Add scalar *x* and *y* to the queue.
-        """
-        if self.dataLim is not None:
-            xy = np.asarray([(x,y),])
-            self.dataLim.update_from_data_xy(xy, None)
-
-        ind = self._ind % self._nmax
-        #print 'adding to fifo:', ind, x, y
-        self._xs[ind] = x
-        self._ys[ind] = y
-
-        for N,funcs in self.callbackd.items():
-            if (self._ind%N)==0:
-                for func in funcs:
-                    func(self)
-
-        self._ind += 1
-
-    def last(self):
-        """
-        Get the last *x*, *y* or *None*.  *None* if no data set.
-        """
-        if self._ind==0: return None, None
-        ind = (self._ind-1) % self._nmax
-        return self._xs[ind], self._ys[ind]
-
-    def asarrays(self):
-        """
-        Return *x* and *y* as arrays; their length will be the len of
-        data added or *nmax*.
-        """
-        if self._ind<self._nmax:
-            return self._xs[:self._ind], self._ys[:self._ind]
-        ind = self._ind % self._nmax
-
-        self._xa[:self._nmax-ind] = self._xs[ind:]
-        self._xa[self._nmax-ind:] = self._xs[:ind]
-        self._ya[:self._nmax-ind] = self._ys[ind:]
-        self._ya[self._nmax-ind:] = self._ys[:ind]
-
-        return self._xa, self._ya
-
-    def update_datalim_to_current(self):
-        """
-        Update the *datalim* in the current data in the fifo.
-        """
-        if self.dataLim is None:
-            raise ValueError('You must first set the dataLim attr')
-        x, y = self.asarrays()
-        self.dataLim.update_from_data(x, y, True)
-
-        self.dataLim.update_numerix(x, y, True)
-
-def movavg(x,n):
+def movavg(x, n):
     """
     Compute the len(*n*) moving average of *x*.
     """
@@ -1306,158 +2037,9 @@ def movavg(x,n):
     w[:] = 1.0/n
     return np.convolve(x, w, mode='valid')
 
-def save(fname, X, fmt='%.18e',delimiter=' '):
-    """
-    Save the data in *X* to file *fname* using *fmt* string to convert the
-    data to strings.
 
-    Deprecated.  Use numpy.savetxt.
-
-    *fname* can be a filename or a file handle.  If the filename ends
-    in '.gz', the file is automatically saved in compressed gzip
-    format.  The :func:`load` function understands gzipped files
-    transparently.
-
-    Example usage::
-
-      save('test.out', X)         # X is an array
-      save('test1.out', (x,y,z))  # x,y,z equal sized 1D arrays
-      save('test2.out', x)        # x is 1D
-      save('test3.out', x, fmt='%1.4e')  # use exponential notation
-
-    *delimiter* is used to separate the fields, eg. *delimiter* ','
-    for comma-separated values.
-    """
-
-    warnings.warn("use numpy.savetxt", DeprecationWarning)  # 2009/06/13
-
-    if cbook.is_string_like(fname):
-        if fname.endswith('.gz'):
-            import gzip
-            fh = gzip.open(fname,'wb')
-        else:
-            fh = file(fname,'w')
-    elif hasattr(fname, 'seek'):
-        fh = fname
-    else:
-        raise ValueError('fname must be a string or file handle')
-
-
-    X = np.asarray(X)
-    origShape = None
-    if X.ndim == 1:
-        origShape = X.shape
-        X.shape = len(X), 1
-    for row in X:
-        fh.write(delimiter.join([fmt%val for val in row]) + '\n')
-
-    if origShape is not None:
-        X.shape = origShape
-
-
-
-
-def load(fname,comments='#',delimiter=None, converters=None,skiprows=0,
-         usecols=None, unpack=False, dtype=np.float_):
-    """
-    Load ASCII data from *fname* into an array and return the array.
-
-    Deprecated: use numpy.loadtxt.
-
-    The data must be regular, same number of values in every row
-
-    *fname* can be a filename or a file handle.  Support for gzipped
-    files is automatic, if the filename ends in '.gz'.
-
-    matfile data is not supported; for that, use :mod:`scipy.io.mio`
-    module.
-
-    Example usage::
-
-      X = load('test.dat')  # data in two columns
-      t = X[:,0]
-      y = X[:,1]
-
-    Alternatively, you can do the same with "unpack"; see below::
-
-      X = load('test.dat')    # a matrix of data
-      x = load('test.dat')    # a single column of data
-
-    - *comments*: the character used to indicate the start of a comment
-      in the file
-
-    - *delimiter* is a string-like character used to seperate values
-      in the file. If *delimiter* is unspecified or *None*, any
-      whitespace string is a separator.
-
-    - *converters*, if not *None*, is a dictionary mapping column number to
-      a function that will convert that column to a float (or the optional
-      *dtype* if specified).  Eg, if column 0 is a date string::
-
-        converters = {0:datestr2num}
-
-    - *skiprows* is the number of rows from the top to skip.
-
-    - *usecols*, if not *None*, is a sequence of integer column indexes to
-      extract where 0 is the first column, eg ``usecols=[1,4,5]`` to extract
-      just the 2nd, 5th and 6th columns
-
-    - *unpack*, if *True*, will transpose the matrix allowing you to unpack
-      into named arguments on the left hand side::
-
-        t,y = load('test.dat', unpack=True) # for  two column data
-        x,y,z = load('somefile.dat', usecols=[3,5,7], unpack=True)
-
-    - *dtype*: the array will have this dtype.  default: ``numpy.float_``
-
-    .. seealso::
-
-        See :file:`examples/pylab_examples/load_converter.py` in the source tree
-           Exercises many of these options.
-    """
-
-    warnings.warn("use numpy.loadtxt", DeprecationWarning)  # 2009/06/13
-
-    if converters is None: converters = {}
-    fh = cbook.to_filehandle(fname)
-    X = []
-
-    if delimiter==' ':
-        # space splitting is a special case since x.split() is what
-        # you want, not x.split(' ')
-        def splitfunc(x):
-            return x.split()
-    else:
-        def splitfunc(x):
-            return x.split(delimiter)
-
-    converterseq = None
-    for i,line in enumerate(fh):
-        if i<skiprows: continue
-        line = line.split(comments, 1)[0].strip()
-        if not len(line): continue
-        if converterseq is None:
-            converterseq = [converters.get(j,float)
-                               for j,val in enumerate(splitfunc(line))]
-        if usecols is not None:
-            vals = splitfunc(line)
-            row = [converterseq[j](vals[j]) for j in usecols]
-        else:
-            row = [converterseq[j](val)
-                      for j,val in enumerate(splitfunc(line))]
-        thisLen = len(row)
-        X.append(row)
-
-    X = np.array(X, dtype)
-    r,c = X.shape
-    if r==1 or c==1:
-        X.shape = max(r,c),
-    if unpack: return X.transpose()
-    else: return X
-
-
-### the following code was written and submitted by Fernando Perez
-### from the ipython numutils package under a BSD license
+# the following code was written and submitted by Fernando Perez
+# from the ipython numutils package under a BSD license
 # begin fperez functions
 
 """
@@ -1498,17 +2080,14 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 """
 
-import operator
-import math
 
-
-#*****************************************************************************
+# *****************************************************************************
 # Globals
-
-#****************************************************************************
+# ****************************************************************************
 # function definitions
 exp_safe_MIN = math.log(2.2250738585072014e-308)
 exp_safe_MAX = 1.7976931348623157e+308
+
 
 def exp_safe(x):
     """
@@ -1520,18 +2099,19 @@ def exp_safe(x):
     """
 
     if type(x) is np.ndarray:
-        return exp(np.clip(x,exp_safe_MIN,exp_safe_MAX))
+        return np.exp(np.clip(x, exp_safe_MIN, exp_safe_MAX))
     else:
         return math.exp(x)
 
-def amap(fn,*args):
+
+def amap(fn, *args):
     """
     amap(function, sequence[, sequence, ...]) -> array.
 
     Works like :func:`map`, but it returns an array.  This is just a
     convenient shorthand for ``numpy.array(map(...))``.
     """
-    return np.array(map(fn,*args))
+    return np.array(list(map(fn, *args)))
 
 
 def rms_flat(a):
@@ -1539,6 +2119,7 @@ def rms_flat(a):
     Return the root mean square of all the elements of *a*, flattened out.
     """
     return np.sqrt(np.mean(np.absolute(a)**2))
+
 
 def l1norm(a):
     """
@@ -1548,6 +2129,7 @@ def l1norm(a):
     """
     return np.sum(np.absolute(a))
 
+
 def l2norm(a):
     """
     Return the *l2* norm of *a*, flattened out.
@@ -1556,7 +2138,8 @@ def l2norm(a):
     """
     return np.sqrt(np.sum(np.absolute(a)**2))
 
-def norm_flat(a,p=2):
+
+def norm_flat(a, p=2):
     """
     norm(a,p=2) -> l-p norm of a.flat
 
@@ -1567,12 +2150,13 @@ def norm_flat(a,p=2):
     """
     # This function was being masked by a more general norm later in
     # the file.  We may want to simply delete it.
-    if p=='Infinity':
+    if p == 'Infinity':
         return np.amax(np.absolute(a))
     else:
         return (np.sum(np.absolute(a)**p))**(1.0/p)
 
-def frange(xini,xfin=None,delta=None,**kw):
+
+def frange(xini, xfin=None, delta=None, **kw):
     """
     frange([start,] stop[, step, keywords]) -> array of floats
 
@@ -1612,27 +2196,26 @@ def frange(xini,xfin=None,delta=None,**kw):
       array([ 1.   ,  2.375,  3.75 ,  5.125,  6.5  ])
     """
 
-    #defaults
-    kw.setdefault('closed',1)
+    # defaults
+    kw.setdefault('closed', 1)
     endpoint = kw['closed'] != 0
 
     # funny logic to allow the *first* argument to be optional (like range())
     # This was modified with a simpler version from a similar frange() found
     # at http://aspn.activestate.com/ASPN/Cookbook/Python/Recipe/66472
-    if xfin == None:
+    if xfin is None:
         xfin = xini + 0.0
         xini = 0.0
 
-    if delta == None:
+    if delta is None:
         delta = 1.0
 
     # compute # of points, spacing and return final list
     try:
-        npts=kw['npts']
-        delta=(xfin-xini)/float(npts-endpoint)
+        npts = kw['npts']
+        delta = (xfin-xini)/float(npts-endpoint)
     except KeyError:
         npts = int(round((xfin-xini)/delta)) + endpoint
-        #npts = int(floor((xfin-xini)/delta)*(1.0+1e-10)) + endpoint
         # round finds the nearest, so the endpoint can be up to
         # delta/2 larger than xfin.
 
@@ -1665,21 +2248,23 @@ def identity(n, rank=2, dtype='l', typecode=None):
         iden[idx] = 1
     return iden
 
-def base_repr (number, base = 2, padding = 0):
+
+def base_repr(number, base=2, padding=0):
     """
     Return the representation of a *number* in any given *base*.
     """
     chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-    if number < base: \
-       return (padding - 1) * chars [0] + chars [int (number)]
-    max_exponent = int (math.log (number)/math.log (base))
-    max_power = long (base) ** max_exponent
-    lead_digit = int (number/max_power)
-    return chars [lead_digit] + \
-           base_repr (number - max_power * lead_digit, base, \
-                      max (padding - 1, max_exponent))
+    if number < base:
+        return (padding - 1) * chars[0] + chars[int(number)]
+    max_exponent = int(math.log(number)/math.log(base))
+    max_power = long(base) ** max_exponent
+    lead_digit = int(number/max_power)
+    return (chars[lead_digit] +
+            base_repr(number - max_power * lead_digit, base,
+                      max(padding - 1, max_exponent)))
 
-def binary_repr(number, max_length = 1025):
+
+def binary_repr(number, max_length=1025):
     """
     Return the binary representation of the input *number* as a
     string.
@@ -1691,15 +2276,17 @@ def binary_repr(number, max_length = 1025):
     which can be converted to a Python float.
     """
 
-    #assert number < 2L << max_length
-    shifts = map (operator.rshift, max_length * [number], \
-                  range (max_length - 1, -1, -1))
-    digits = map (operator.mod, shifts, max_length * [2])
-    if not digits.count (1): return 0
-    digits = digits [digits.index (1):]
-    return ''.join (map (repr, digits)).replace('L','')
+#   assert number < 2L << max_length
+    shifts = list(map(operator.rshift, max_length * [number],
+                  range(max_length - 1, -1, -1)))
+    digits = list(map(operator.mod, shifts, max_length * [2]))
+    if not digits.count(1):
+        return 0
+    digits = digits[digits.index(1):]
+    return ''.join(map(repr, digits)).replace('L', '')
 
-def log2(x,ln2 = math.log(2.0)):
+
+def log2(x, ln2=math.log(2.0)):
     """
     Return the log(*x*) in base 2.
 
@@ -1708,13 +2295,14 @@ def log2(x,ln2 = math.log(2.0)):
     """
     try:
         bin_n = binary_repr(x)[1:]
-    except (AssertionError,TypeError):
+    except (AssertionError, TypeError):
         return math.log(x)/ln2
     else:
         if '1' in bin_n:
             return math.log(x)/ln2
         else:
             return len(bin_n)
+
 
 def ispower2(n):
     """
@@ -1729,6 +2317,7 @@ def ispower2(n):
     else:
         return len(bin_n)
 
+
 def isvector(X):
     """
     Like the MATLAB function with the same name, returns *True*
@@ -1739,30 +2328,40 @@ def isvector(X):
 
     If you just want to see if the array has 1 axis, use X.ndim == 1.
     """
-    return np.prod(X.shape)==np.max(X.shape)
+    return np.prod(X.shape) == np.max(X.shape)
 
-### end fperez numutils code
+# end fperez numutils code
 
 
-#helpers for loading, saving, manipulating and viewing numpy record arrays
+# helpers for loading, saving, manipulating and viewing numpy record arrays
 
 def safe_isnan(x):
     ':func:`numpy.isnan` for arbitrary types'
     if cbook.is_string_like(x):
         return False
-    try: b = np.isnan(x)
-    except NotImplementedError: return False
-    except TypeError: return False
-    else: return b
+    try:
+        b = np.isnan(x)
+    except NotImplementedError:
+        return False
+    except TypeError:
+        return False
+    else:
+        return b
+
 
 def safe_isinf(x):
     ':func:`numpy.isinf` for arbitrary types'
     if cbook.is_string_like(x):
         return False
-    try: b = np.isinf(x)
-    except NotImplementedError: return False
-    except TypeError: return False
-    else: return b
+    try:
+        b = np.isinf(x)
+    except NotImplementedError:
+        return False
+    except TypeError:
+        return False
+    else:
+        return b
+
 
 def rec_append_fields(rec, names, arrs, dtypes=None):
     """
@@ -1771,14 +2370,14 @@ def rec_append_fields(rec, names, arrs, dtypes=None):
     *arrs* and *dtypes* do not have to be lists. They can just be the
     values themselves.
     """
-    if (not cbook.is_string_like(names) and cbook.iterable(names) \
+    if (not cbook.is_string_like(names) and cbook.iterable(names)
             and len(names) and cbook.is_string_like(names[0])):
         if len(names) != len(arrs):
-            raise ValueError, "number of arrays do not match number of names"
-    else: # we have only 1 name and 1 array
+            raise ValueError("number of arrays do not match number of names")
+    else:  # we have only 1 name and 1 array
         names = [names]
         arrs = [arrs]
-    arrs = map(np.asarray, arrs)
+    arrs = list(map(np.asarray, arrs))
     if dtypes is None:
         dtypes = [a.dtype for a in arrs]
     elif not cbook.iterable(dtypes):
@@ -1787,9 +2386,9 @@ def rec_append_fields(rec, names, arrs, dtypes=None):
         if len(dtypes) == 1:
             dtypes = dtypes * len(arrs)
         else:
-            raise ValueError, "dtypes must be None, a single dtype or a list"
+            raise ValueError("dtypes must be None, a single dtype or a list")
 
-    newdtype = np.dtype(rec.dtype.descr + zip(names, dtypes))
+    newdtype = np.dtype(rec.dtype.descr + list(zip(names, dtypes)))
     newrec = np.recarray(rec.shape, dtype=newdtype)
     for field in rec.dtype.fields:
         newrec[field] = rec[field]
@@ -1804,16 +2403,16 @@ def rec_drop_fields(rec, names):
     """
 
     names = set(names)
-    Nr = len(rec)
 
     newdtype = np.dtype([(name, rec.dtype[name]) for name in rec.dtype.names
-                       if name not in names])
+                         if name not in names])
 
     newrec = np.recarray(rec.shape, dtype=newdtype)
     for field in newdtype.names:
         newrec[field] = rec[field]
 
     return newrec
+
 
 def rec_keep_fields(rec, names):
     """
@@ -1830,13 +2429,12 @@ def rec_keep_fields(rec, names):
     return np.rec.fromarrays(arrays, names=names)
 
 
-
 def rec_groupby(r, groupby, stats):
     """
     *r* is a numpy record array
 
     *groupby* is a sequence of record array attribute names that
-    together form the grouping key.  eg ('date', 'productcode')
+    together form the grouping key.  e.g., ('date', 'productcode')
 
     *stats* is a sequence of (*attr*, *func*, *outname*) tuples which
     will call ``x = func(attr)`` and assign *x* to the record array
@@ -1845,7 +2443,7 @@ def rec_groupby(r, groupby, stats):
       stats = ( ('sales', len, 'numsales'), ('sales', np.mean, 'avgsale') )
 
     Return record array has *dtype* names for each attribute name in
-    the the *groupby* argument, with the associated group values, and
+    the *groupby* argument, with the associated group values, and
     for each outname name in the *stats* argument, with the associated
     stat summary output.
     """
@@ -1857,7 +2455,7 @@ def rec_groupby(r, groupby, stats):
         rowd.setdefault(key, []).append(i)
 
     # sort the output by groupby keys
-    keys = rowd.keys()
+    keys = list(six.iterkeys(rowd))
     keys.sort()
 
     rows = []
@@ -1871,11 +2469,10 @@ def rec_groupby(r, groupby, stats):
         rows.append(row)
 
     # build the output record array with groupby and outname attributes
-    attrs, funcs, outnames = zip(*stats)
+    attrs, funcs, outnames = list(zip(*stats))
     names = list(groupby)
     names.extend(outnames)
     return np.rec.fromrecords(rows, names=names)
-
 
 
 def rec_summarize(r, summaryfuncs):
@@ -1883,7 +2480,7 @@ def rec_summarize(r, summaryfuncs):
     *r* is a numpy record array
 
     *summaryfuncs* is a list of (*attr*, *func*, *outname*) tuples
-    which will apply *func* to the the array *r*[attr] and assign the
+    which will apply *func* to the array *r*[attr] and assign the
     output to a new attribute name *outname*.  The returned record
     array is identical to *r*, with extra arrays for each element in
     *summaryfuncs*.
@@ -1900,7 +2497,8 @@ def rec_summarize(r, summaryfuncs):
     return np.rec.fromarrays(arrays, names=names)
 
 
-def rec_join(key, r1, r2, jointype='inner', defaults=None, r1postfix='1', r2postfix='2'):
+def rec_join(key, r1, r2, jointype='inner', defaults=None, r1postfix='1',
+             r2postfix='2'):
     """
     Join record arrays *r1* and *r2* on *key*; *key* is a tuple of
     field names -- if *key* is a string it is assumed to be a single
@@ -1926,15 +2524,15 @@ def rec_join(key, r1, r2, jointype='inner', defaults=None, r1postfix='1', r2post
 
     for name in key:
         if name not in r1.dtype.names:
-            raise ValueError('r1 does not have key field %s'%name)
+            raise ValueError('r1 does not have key field %s' % name)
         if name not in r2.dtype.names:
-            raise ValueError('r2 does not have key field %s'%name)
+            raise ValueError('r2 does not have key field %s' % name)
 
     def makekey(row):
         return tuple([row[name] for name in key])
 
-    r1d = dict([(makekey(row),i) for i,row in enumerate(r1)])
-    r2d = dict([(makekey(row),i) for i,row in enumerate(r2)])
+    r1d = dict([(makekey(row), i) for i, row in enumerate(r1)])
+    r2d = dict([(makekey(row), i) for i, row in enumerate(r2)])
 
     r1keys = set(r1d.keys())
     r2keys = set(r2d.keys())
@@ -1956,18 +2554,23 @@ def rec_join(key, r1, r2, jointype='inner', defaults=None, r1postfix='1', r2post
         right_len = len(right_ind)
 
     def key_desc(name):
-        'if name is a string key, use the larger size of r1 or r2 before merging'
+        '''
+        if name is a string key, use the larger size of r1 or r2 before
+        merging
+        '''
         dt1 = r1.dtype[name]
         if dt1.type != np.string_:
             return (name, dt1.descr[0][1])
 
-        dt2 = r1.dtype[name]
-        assert dt2==dt1
-        if dt1.num>dt2.num:
+        dt2 = r2.dtype[name]
+        if dt1 != dt2:
+            msg = "The '{0}' fields in arrays 'r1' and 'r2' must have the same"
+            msg += " dtype."
+            raise ValueError(msg.format(name))
+        if dt1.num > dt2.num:
             return (name, dt1.descr[0][1])
         else:
             return (name, dt2.descr[0][1])
-
 
     keydesc = [key_desc(name) for name in key]
 
@@ -1975,18 +2578,24 @@ def rec_join(key, r1, r2, jointype='inner', defaults=None, r1postfix='1', r2post
         """
         The column name in *newrec* that corresponds to the column in *r1*.
         """
-        if name in key or name not in r2.dtype.names: return name
-        else: return name + r1postfix
+        if name in key or name not in r2.dtype.names:
+            return name
+        else:
+            return name + r1postfix
 
     def mapped_r2field(name):
         """
         The column name in *newrec* that corresponds to the column in *r2*.
         """
-        if name in key or name not in r1.dtype.names: return name
-        else: return name + r2postfix
+        if name in key or name not in r1.dtype.names:
+            return name
+        else:
+            return name + r2postfix
 
-    r1desc = [(mapped_r1field(desc[0]), desc[1]) for desc in r1.dtype.descr if desc[0] not in key]
-    r2desc = [(mapped_r2field(desc[0]), desc[1]) for desc in r2.dtype.descr if desc[0] not in key]
+    r1desc = [(mapped_r1field(desc[0]), desc[1]) for desc in r1.dtype.descr
+              if desc[0] not in key]
+    r2desc = [(mapped_r2field(desc[0]), desc[1]) for desc in r2.dtype.descr
+              if desc[0] not in key]
     newdtype = np.dtype(keydesc + r1desc + r2desc)
 
     newrec = np.recarray((common_len + left_len + right_len,), dtype=newdtype)
@@ -1994,17 +2603,18 @@ def rec_join(key, r1, r2, jointype='inner', defaults=None, r1postfix='1', r2post
     if defaults is not None:
         for thiskey in defaults:
             if thiskey not in newdtype.names:
-                warnings.warn('rec_join defaults key="%s" not in new dtype names "%s"'%(
-                    thiskey, newdtype.names))
+                warnings.warn('rec_join defaults key="%s" not in new dtype '
+                              'names "%s"' % (thiskey, newdtype.names))
 
     for name in newdtype.names:
         dt = newdtype[name]
         if dt.kind in ('f', 'i'):
             newrec[name] = 0
 
-    if jointype != 'inner' and defaults is not None: # fill in the defaults enmasse
-        newrec_fields = newrec.dtype.fields.keys()
-        for k, v in defaults.items():
+    if jointype != 'inner' and defaults is not None:
+        # fill in the defaults enmasse
+        newrec_fields = list(six.iterkeys(newrec.dtype.fields.keys))
+        for k, v in six.iteritems(defaults):
             if k in newrec_fields:
                 newrec[k] = v
 
@@ -2013,7 +2623,9 @@ def rec_join(key, r1, r2, jointype='inner', defaults=None, r1postfix='1', r2post
         if common_len:
             newrec[newfield][:common_len] = r1[field][r1ind]
         if (jointype == "outer" or jointype == "leftouter") and left_len:
-            newrec[newfield][common_len:(common_len+left_len)] = r1[field][left_ind]
+            newrec[newfield][common_len:(common_len+left_len)] = (
+                r1[field][left_ind]
+            )
 
     for field in r2.dtype.names:
         newfield = mapped_r2field(field)
@@ -2025,6 +2637,7 @@ def rec_join(key, r1, r2, jointype='inner', defaults=None, r1postfix='1', r2post
     newrec.sort(order=key)
 
     return newrec
+
 
 def recs_join(key, name, recs, jointype='outer', missing=0., postfixes=None):
     """
@@ -2060,30 +2673,33 @@ def recs_join(key, name, recs, jointype='outer', missing=0., postfixes=None):
 
     """
     results = []
-    aligned_iters = cbook.align_iterators(operator.attrgetter(key), *[iter(r) for r in recs])
+    aligned_iters = cbook.align_iterators(operator.attrgetter(key),
+                                          *[iter(r) for r in recs])
 
     def extract(r):
-        if r is None: return missing
-        else: return r[name]
-
+        if r is None:
+            return missing
+        else:
+            return r[name]
 
     if jointype == "outer":
         for rowkey, row in aligned_iters:
-            results.append([rowkey] + map(extract, row))
+            results.append([rowkey] + list(map(extract, row)))
     elif jointype == "inner":
         for rowkey, row in aligned_iters:
-            if None not in row: # throw out any Nones
-                results.append([rowkey] + map(extract, row))
+            if None not in row:  # throw out any Nones
+                results.append([rowkey] + list(map(extract, row)))
 
     if postfixes is None:
-        postfixes = ['%d'%i for i in range(len(recs))]
-    names = ",".join([key] + ["%s%s" % (name, postfix) for postfix in postfixes])
+        postfixes = ['%d' % i for i in range(len(recs))]
+    names = ",".join([key] + ["%s%s" % (name, postfix)
+                              for postfix in postfixes])
     return np.rec.fromrecords(results, names=names)
 
 
 def csv2rec(fname, comments='#', skiprows=0, checkrows=0, delimiter=',',
             converterd=None, names=None, missing='', missingd=None,
-            use_mrecords=False):
+            use_mrecords=False, dayfirst=False, yearfirst=False):
     """
     Load data from comma/space/tab delimited file in *fname* into a
     numpy record array and return the record array.
@@ -2100,7 +2716,7 @@ def csv2rec(fname, comments='#', skiprows=0, checkrows=0, delimiter=',',
       files is automatic, if the filename ends in '.gz'
 
     - *comments*: the character used to indicate the start of a comment
-      in the file
+      in the file, or *None* to switch off the removal of comments
 
     - *skiprows*: is the number of rows from the top to skip
 
@@ -2115,14 +2731,26 @@ def csv2rec(fname, comments='#', skiprows=0, checkrows=0, delimiter=',',
 
     - *missingd* is a dictionary mapping munged column names to field values
       which signify that the field does not contain actual data and should
-      be masked, e.g. '0000-00-00' or 'unused'
+      be masked, e.g., '0000-00-00' or 'unused'
 
     - *missing*: a string whose value signals a missing field regardless of
       the column it appears in
 
-    - *use_mrecords*: if True, return an mrecords.fromrecords record array if any of the data are missing
+    - *use_mrecords*: if True, return an mrecords.fromrecords record array if
+      any of the data are missing
 
-      If no rows are found, *None* is returned -- see :file:`examples/loadrec.py`
+    - *dayfirst*: default is False so that MM-DD-YY has precedence over
+      DD-MM-YY.  See
+      http://labix.org/python-dateutil#head-b95ce2094d189a89f80f5ae52a05b4ab7b41af47
+      for further information.
+
+    - *yearfirst*: default is False so that MM-DD-YY has precedence over
+      YY-MM-DD. See
+      http://labix.org/python-dateutil#head-b95ce2094d189a89f80f5ae52a05b4ab7b41af47
+      for further information.
+
+      If no rows are found, *None* is returned -- see
+      :file:`examples/loadrec.py`
     """
 
     if converterd is None:
@@ -2133,11 +2761,10 @@ def csv2rec(fname, comments='#', skiprows=0, checkrows=0, delimiter=',',
 
     import dateutil.parser
     import datetime
-    parsedate = dateutil.parser.parse
-
 
     fh = cbook.to_filehandle(fname)
 
+    delimiter = str(delimiter)
 
     class FH:
         """
@@ -2159,22 +2786,23 @@ def csv2rec(fname, comments='#', skiprows=0, checkrows=0, delimiter=',',
         def fix(self, s):
             return ' '.join(s.split())
 
-
-        def next(self):
-            return self.fix(self.fh.next())
+        def __next__(self):
+            return self.fix(next(self.fh))
 
         def __iter__(self):
             for line in self.fh:
                 yield self.fix(line)
 
-    if delimiter==' ':
+    if delimiter == ' ':
         fh = FH(fh)
 
     reader = csv.reader(fh, delimiter=delimiter)
+
     def process_skiprows(reader):
         if skiprows:
             for i, row in enumerate(reader):
-                if i>=(skiprows-1): break
+                if i >= (skiprows-1):
+                    break
 
         return fh, reader
 
@@ -2196,14 +2824,16 @@ def csv2rec(fname, comments='#', skiprows=0, checkrows=0, delimiter=',',
                 return func(val)
         return newfunc
 
-
     def mybool(x):
-        if x=='True': return True
-        elif x=='False': return False
-        else: raise ValueError('invalid bool')
+        if x == 'True':
+            return True
+        elif x == 'False':
+            return False
+        else:
+            raise ValueError('invalid bool')
 
     dateparser = dateutil.parser.parse
-    mydateparser = with_default_value(dateparser, datetime.date(1,1,1))
+    mydateparser = with_default_value(dateparser, datetime.date(1, 1, 1))
     myfloat = with_default_value(float, np.nan)
     myint = with_default_value(int, -1)
     mystr = with_default_value(str, '')
@@ -2211,47 +2841,54 @@ def csv2rec(fname, comments='#', skiprows=0, checkrows=0, delimiter=',',
 
     def mydate(x):
         # try and return a date object
-        d = dateparser(x)
+        d = dateparser(x, dayfirst=dayfirst, yearfirst=yearfirst)
 
-        if d.hour>0 or d.minute>0 or d.second>0:
+        if d.hour > 0 or d.minute > 0 or d.second > 0:
             raise ValueError('not a date')
         return d.date()
-    mydate = with_default_value(mydate, datetime.date(1,1,1))
+    mydate = with_default_value(mydate, datetime.date(1, 1, 1))
 
     def get_func(name, item, func):
         # promote functions in this order
-        funcmap = {mybool:myint,myint:myfloat, myfloat:mydate, mydate:mydateparser, mydateparser:mystr}
-        try: func(name, item)
+        funcmap = {mybool: myint, myint: myfloat, myfloat: mydate,
+                   mydate: mydateparser, mydateparser: mystr}
+        try:
+            func(name, item)
         except:
-            if func==mystr:
-                raise ValueError('Could not find a working conversion function')
-            else: return get_func(name, item, funcmap[func])    # recurse
-        else: return func
-
+            if func == mystr:
+                raise ValueError('Could not find a working conversion '
+                                 'function')
+            else:
+                return get_func(name, item, funcmap[func])    # recurse
+        else:
+            return func
 
     # map column names that clash with builtins -- TODO - extend this list
     itemd = {
-        'return' : 'return_',
-        'file' : 'file_',
-        'print' : 'print_',
+        'return': 'return_',
+        'file':   'file_',
+        'print':  'print_',
         }
 
-    def get_converters(reader):
+    def get_converters(reader, comments):
 
         converters = None
-        for i, row in enumerate(reader):
-            if i==0:
+        i = 0
+        for row in reader:
+            if (len(row) and comments is not None and
+                    row[0].startswith(comments)):
+                continue
+            if i == 0:
                 converters = [mybool]*len(row)
-            if checkrows and i>checkrows:
+            if checkrows and i > checkrows:
                 break
-            #print i, len(names), len(row)
-            #print 'converters', zip(converters, row)
+            i += 1
+
             for j, (name, item) in enumerate(zip(names, row)):
                 func = converterd.get(j)
                 if func is None:
                     func = converterd.get(name)
                 if func is None:
-                    #if not item.strip(): continue
                     func = converters[j]
                     if len(item.strip()):
                         func = get_func(name, item, func)
@@ -2266,8 +2903,8 @@ def csv2rec(fname, comments='#', skiprows=0, checkrows=0, delimiter=',',
 
     if needheader:
         for row in reader:
-            #print 'csv2rec', row
-            if len(row) and row[0].startswith(comments):
+            if (len(row) and comments is not None and
+                    row[0].startswith(comments)):
                 continue
             headers = row
             break
@@ -2282,12 +2919,12 @@ def csv2rec(fname, comments='#', skiprows=0, checkrows=0, delimiter=',',
             item = item.strip().lower().replace(' ', '_')
             item = ''.join([c for c in item if c not in delete])
             if not len(item):
-                item = 'column%d'%i
+                item = 'column%d' % i
 
             item = itemd.get(item, item)
             cnt = seen.get(item, 0)
-            if cnt>0:
-                names.append(item + '_%d'%cnt)
+            if cnt > 0:
+                names.append(item + '_%d' % cnt)
             else:
                 names.append(item)
             seen[item] = cnt+1
@@ -2297,7 +2934,7 @@ def csv2rec(fname, comments='#', skiprows=0, checkrows=0, delimiter=',',
             names = [n.strip() for n in names.split(',')]
 
     # get the converter functions by inspecting checkrows
-    converters = get_converters(reader)
+    converters = get_converters(reader, comments)
     if converters is None:
         raise ValueError('Could not find any valid data in CSV file')
 
@@ -2309,8 +2946,9 @@ def csv2rec(fname, comments='#', skiprows=0, checkrows=0, delimiter=',',
     if needheader:
         while 1:
             # skip past any comments and consume one line of column header
-            row = reader.next()
-            if len(row) and row[0].startswith(comments):
+            row = next(reader)
+            if (len(row) and comments is not None and
+                    row[0].startswith(comments)):
                 continue
             break
 
@@ -2319,21 +2957,27 @@ def csv2rec(fname, comments='#', skiprows=0, checkrows=0, delimiter=',',
     rows = []
     rowmasks = []
     for i, row in enumerate(reader):
-        if not len(row): continue
-        if row[0].startswith(comments): continue
+        if not len(row):
+            continue
+        if comments is not None and row[0].startswith(comments):
+            continue
         # Ensure that the row returned always has the same nr of elements
         row.extend([''] * (len(converters) - len(row)))
-        rows.append([func(name, val) for func, name, val in zip(converters, names, row)])
-        rowmasks.append([ismissing(name, val) for name, val in zip(names, row)])
+        rows.append([func(name, val)
+                     for func, name, val in zip(converters, names, row)])
+        rowmasks.append([ismissing(name, val)
+                         for name, val in zip(names, row)])
     fh.close()
 
     if not len(rows):
         return None
 
     if use_mrecords and np.any(rowmasks):
-        try: from numpy.ma import mrecords
+        try:
+            from numpy.ma import mrecords
         except ImportError:
-            raise RuntimeError('numpy 1.05 or later is required for masked array support')
+            raise RuntimeError('numpy 1.05 or later is required for masked '
+                               'array support')
         else:
             r = mrecords.fromrecords(rows, names=names, mask=rowmasks)
     else:
@@ -2342,7 +2986,7 @@ def csv2rec(fname, comments='#', skiprows=0, checkrows=0, delimiter=',',
 
 
 # a series of classes for describing the format intentions of various rec views
-class FormatObj:
+class FormatObj(object):
     def tostr(self, x):
         return self.toval(x)
 
@@ -2352,22 +2996,18 @@ class FormatObj:
     def fromstr(self, s):
         return s
 
-
     def __hash__(self):
         """
-        override the hash function of any of the formatters, so that we don't create duplicate excel format styles
+        override the hash function of any of the formatters, so that we don't
+        create duplicate excel format styles
         """
         return hash(self.__class__)
+
 
 class FormatString(FormatObj):
     def tostr(self, x):
         val = repr(x)
         return val[1:-1]
-
-#class FormatString(FormatObj):
-#    def tostr(self, x):
-#        return '"%r"'%self.toval(x)
-
 
 
 class FormatFormatStr(FormatObj):
@@ -2375,15 +3015,14 @@ class FormatFormatStr(FormatObj):
         self.fmt = fmt
 
     def tostr(self, x):
-        if x is None: return 'None'
-        return self.fmt%self.toval(x)
-
-
+        if x is None:
+            return 'None'
+        return self.fmt % self.toval(x)
 
 
 class FormatFloat(FormatFormatStr):
     def __init__(self, precision=4, scale=1.):
-        FormatFormatStr.__init__(self, '%%1.%df'%precision)
+        FormatFormatStr.__init__(self, '%%1.%df' % precision)
         self.precision = precision
         self.scale = scale
 
@@ -2402,7 +3041,7 @@ class FormatFloat(FormatFormatStr):
 class FormatInt(FormatObj):
 
     def tostr(self, x):
-        return '%d'%int(x)
+        return '%d' % int(x)
 
     def toval(self, x):
         return int(x)
@@ -2410,18 +3049,19 @@ class FormatInt(FormatObj):
     def fromstr(self, s):
         return int(s)
 
+
 class FormatBool(FormatObj):
-
-
     def toval(self, x):
         return str(x)
 
     def fromstr(self, s):
         return bool(s)
 
+
 class FormatPercent(FormatFloat):
     def __init__(self, precision=4):
         FormatFloat.__init__(self, precision, scale=100.)
+
 
 class FormatThousands(FormatFloat):
     def __init__(self, precision=4):
@@ -2440,14 +3080,15 @@ class FormatDate(FormatObj):
     def __hash__(self):
         return hash((self.__class__, self.fmt))
 
-
     def toval(self, x):
-        if x is None: return 'None'
+        if x is None:
+            return 'None'
         return x.strftime(self.fmt)
 
     def fromstr(self, x):
         import dateutil.parser
         return dateutil.parser.parse(x).date()
+
 
 class FormatDatetime(FormatDate):
     def __init__(self, fmt='%Y-%m-%d %H:%M:%S'):
@@ -2458,18 +3099,17 @@ class FormatDatetime(FormatDate):
         return dateutil.parser.parse(x)
 
 
-
-
 defaultformatd = {
-    np.bool_ : FormatBool(),
-    np.int16 : FormatInt(),
-    np.int32 : FormatInt(),
-    np.int64 : FormatInt(),
-    np.float32 : FormatFloat(),
-    np.float64 : FormatFloat(),
-    np.object_ : FormatObj(),
-    np.string_ : FormatString(),
+    np.bool_:   FormatBool(),
+    np.int16:   FormatInt(),
+    np.int32:   FormatInt(),
+    np.int64:   FormatInt(),
+    np.float32: FormatFloat(),
+    np.float64: FormatFloat(),
+    np.object_: FormatObj(),
+    np.string_: FormatString(),
     }
+
 
 def get_formatd(r, formatd=None):
     'build a formatd guaranteed to have a key for every dtype name'
@@ -2484,12 +3124,14 @@ def get_formatd(r, formatd=None):
         formatd[name] = format
     return formatd
 
+
 def csvformat_factory(format):
     format = copy.deepcopy(format)
     if isinstance(format, FormatFloat):
-        format.scale = 1. # override scaling for storage
+        format.scale = 1.  # override scaling for storage
         format.fmt = '%r'
     return format
+
 
 def rec2txt(r, header=None, padding=3, precision=3, fields=None):
     """
@@ -2527,22 +3169,27 @@ def rec2txt(r, header=None, padding=3, precision=3, fields=None):
     if cbook.is_numlike(precision):
         precision = [precision]*len(r.dtype)
 
-    def get_type(item,atype=int):
-        tdict = {None:int, int:float, float:str}
-        try: atype(str(item))
-        except: return get_type(item,tdict[atype])
+    def get_type(item, atype=int):
+        tdict = {None: int, int: float, float: str}
+        try:
+            atype(str(item))
+        except:
+            return get_type(item, tdict[atype])
         return atype
 
     def get_justify(colname, column, precision):
         ntype = type(column[0])
 
-        if ntype==np.str or ntype==np.str_ or ntype==np.string0 or ntype==np.string_:
-            length = max(len(colname),column.itemsize)
-            return 0, length+padding, "%s" # left justify
+        if (ntype == np.str or ntype == np.str_ or ntype == np.string0 or
+                ntype == np.string_):
+            length = max(len(colname), column.itemsize)
+            return 0, length+padding, "%s"  # left justify
 
-        if ntype==np.int or ntype==np.int16 or ntype==np.int32 or ntype==np.int64 or ntype==np.int8 or ntype==np.int_:
-            length = max(len(colname),np.max(map(len,map(str,column))))
-            return 1, length+padding, "%d" # right justify
+        if (ntype == np.int or ntype == np.int16 or ntype == np.int32 or
+                ntype == np.int64 or ntype == np.int8 or ntype == np.int_):
+            length = max(len(colname),
+                         np.max(list(map(len, list(map(str, column))))))
+            return 1, length+padding, "%d"  # right justify
 
         # JDH: my powerbook does not have np.float96 using np 1.3.0
         """
@@ -2550,37 +3197,48 @@ def rec2txt(r, header=None, padding=3, precision=3, fields=None):
         Out[2]: '1.3.0.dev5948'
 
         In [3]: !uname -a
-        Darwin Macintosh-5.local 9.4.0 Darwin Kernel Version 9.4.0: Mon Jun  9 19:30:53 PDT 2008; root:xnu-1228.5.20~1/RELEASE_I386 i386 i386
+        Darwin Macintosh-5.local 9.4.0 Darwin Kernel Version 9.4.0: Mon Jun
+        9 19:30:53 PDT 2008; root:xnu-1228.5.20~1/RELEASE_I386 i386 i386
 
         In [4]: np.float96
         ---------------------------------------------------------------------------
-        AttributeError                            Traceback (most recent call la
+        AttributeError                           Traceback (most recent call la
         """
-        if ntype==np.float or ntype==np.float32 or ntype==np.float64 or (hasattr(np, 'float96') and (ntype==np.float96)) or ntype==np.float_:
+        if (ntype == np.float or ntype == np.float32 or ntype == np.float64 or
+                (hasattr(np, 'float96') and (ntype == np.float96)) or
+                ntype == np.float_):
             fmt = "%." + str(precision) + "f"
-            length = max(len(colname),np.max(map(len,map(lambda x:fmt%x,column))))
+            length = max(
+                len(colname),
+                np.max(list(map(len, list(map(lambda x: fmt % x, column)))))
+            )
             return 1, length+padding, fmt   # right justify
 
-        return 0, max(len(colname),np.max(map(len,map(str,column))))+padding, "%s"
+        return (0,
+                max(len(colname),
+                    np.max(list(map(len, list(map(str, column))))))+padding,
+                "%s")
 
     if header is None:
         header = r.dtype.names
 
-    justify_pad_prec = [get_justify(header[i],r.__getitem__(colname),precision[i]) for i, colname in enumerate(r.dtype.names)]
+    justify_pad_prec = [get_justify(header[i], r.__getitem__(colname),
+                                    precision[i])
+                        for i, colname in enumerate(r.dtype.names)]
 
     justify_pad_prec_spacer = []
     for i in range(len(justify_pad_prec)):
-        just,pad,prec = justify_pad_prec[i]
+        just, pad, prec = justify_pad_prec[i]
         if i == 0:
-            justify_pad_prec_spacer.append((just,pad,prec,0))
+            justify_pad_prec_spacer.append((just, pad, prec, 0))
         else:
-            pjust,ppad,pprec = justify_pad_prec[i-1]
+            pjust, ppad, pprec = justify_pad_prec[i-1]
             if pjust == 0 and just == 1:
-                justify_pad_prec_spacer.append((just,pad-padding,prec,0))
+                justify_pad_prec_spacer.append((just, pad-padding, prec, 0))
             elif pjust == 1 and just == 0:
-                justify_pad_prec_spacer.append((just,pad,prec,padding))
+                justify_pad_prec_spacer.append((just, pad, prec, padding))
             else:
-                justify_pad_prec_spacer.append((just,pad,prec,0))
+                justify_pad_prec_spacer.append((just, pad, prec, 0))
 
     def format(item, just_pad_prec_spacer):
         just, pad, prec, spacer = just_pad_prec_spacer
@@ -2588,22 +3246,23 @@ def rec2txt(r, header=None, padding=3, precision=3, fields=None):
             return spacer*' ' + str(item).ljust(pad)
         else:
             if get_type(item) == float:
-                item = (prec%float(item))
+                item = (prec % float(item))
             elif get_type(item) == int:
-                item = (prec%int(item))
+                item = (prec % int(item))
 
             return item.rjust(pad)
 
     textl = []
-    textl.append(''.join([format(colitem,justify_pad_prec_spacer[j]) for j, colitem in enumerate(header)]))
+    textl.append(''.join([format(colitem, justify_pad_prec_spacer[j])
+                          for j, colitem in enumerate(header)]))
     for i, row in enumerate(r):
-        textl.append(''.join([format(colitem,justify_pad_prec_spacer[j]) for j, colitem in enumerate(row)]))
-        if i==0:
+        textl.append(''.join([format(colitem, justify_pad_prec_spacer[j])
+                              for j, colitem in enumerate(row)]))
+        if i == 0:
             textl[0] = textl[0].rstrip()
 
     text = os.linesep.join(textl)
     return text
-
 
 
 def rec2csv(r, fname, delimiter=',', formatd=None, missing='',
@@ -2629,6 +3288,8 @@ def rec2csv(r, fname, delimiter=',', formatd=None, missing='',
             For information about *missing* and *missingd*, which can
             be used to fill in masked values into your CSV file.
     """
+
+    delimiter = str(delimiter)
 
     if missingd is None:
         missingd = dict()
@@ -2675,129 +3336,136 @@ def rec2csv(r, fname, delimiter=',', formatd=None, missing='',
     if opened:
         fh.close()
 
-def griddata(x,y,z,xi,yi,interp='nn'):
+
+def griddata(x, y, z, xi, yi, interp='nn'):
+    """Interpolates from a nonuniformly spaced grid to some other
+    grid.
+
+    Fits a surface of the form z = f(`x`, `y`) to the data in the
+    (usually) nonuniformly spaced vectors (`x`, `y`, `z`), then
+    interpolates this surface at the points specified by
+    (`xi`, `yi`) to produce `zi`.
+
+    Parameters
+    ----------
+    x, y, z : 1d array_like
+        Coordinates of grid points to interpolate from.
+    xi, yi : 1d or 2d array_like
+        Coordinates of grid points to interpolate to.
+    interp : string key from {'nn', 'linear'}
+        Interpolation algorithm, either 'nn' for natural neighbor, or
+        'linear' for linear interpolation.
+
+    Returns
+    -------
+    2d float array
+        Array of values interpolated at (`xi`, `yi`) points.  Array
+        will be masked is any of (`xi`, `yi`) are outside the convex
+        hull of (`x`, `y`).
+
+    Notes
+    -----
+    If `interp` is 'nn' (the default), uses natural neighbor
+    interpolation based on Delaunay triangulation.  This option is
+    only available if the mpl_toolkits.natgrid module is installed.
+    This can be downloaded from https://github.com/matplotlib/natgrid.
+    The (`xi`, `yi`) grid must be regular and monotonically increasing
+    in this case.
+
+    If `interp` is 'linear', linear interpolation is used via
+    matplotlib.tri.LinearTriInterpolator.
+
+    Instead of using `griddata`, more flexible functionality and other
+    interpolation options are available using a
+    matplotlib.tri.Triangulation and a matplotlib.tri.TriInterpolator.
     """
-    ``zi = griddata(x,y,z,xi,yi)`` fits a surface of the form *z* =
-    *f*(*x*, *y*) to the data in the (usually) nonuniformly spaced
-    vectors (*x*, *y*, *z*).  :func:`griddata` interpolates this
-    surface at the points specified by (*xi*, *yi*) to produce
-    *zi*. *xi* and *yi* must describe a regular grid, can be either 1D
-    or 2D, but must be monotonically increasing.
+    # Check input arguments.
+    x = np.asanyarray(x, dtype=np.float64)
+    y = np.asanyarray(y, dtype=np.float64)
+    z = np.asanyarray(z, dtype=np.float64)
+    if x.shape != y.shape or x.shape != z.shape or x.ndim != 1:
+        raise ValueError("x, y and z must be equal-length 1-D arrays")
 
-    A masked array is returned if any grid points are outside convex
-    hull defined by input data (no extrapolation is done).
-
-    If interp keyword is set to '`nn`' (default),
-    uses natural neighbor interpolation based on Delaunay
-    triangulation.  By default, this algorithm is provided by the
-    :mod:`matplotlib.delaunay` package, written by Robert Kern.  The
-    triangulation algorithm in this package is known to fail on some
-    nearly pathological cases. For this reason, a separate toolkit
-    (:mod:`mpl_tookits.natgrid`) has been created that provides a more
-    robust algorithm fof triangulation and interpolation.  This
-    toolkit is based on the NCAR natgrid library, which contains code
-    that is not redistributable under a BSD-compatible license.  When
-    installed, this function will use the :mod:`mpl_toolkits.natgrid`
-    algorithm, otherwise it will use the built-in
-    :mod:`matplotlib.delaunay` package.
-
-    If the interp keyword is set to '`linear`', then linear interpolation
-    is used instead of natural neighbor. In this case, the output grid
-    is assumed to be regular with a constant grid spacing in both the x and
-    y directions. For regular grids with nonconstant grid spacing, you
-    must use natural neighbor interpolation.  Linear interpolation is only valid if
-    :mod:`matplotlib.delaunay` package is used - :mod:`mpl_tookits.natgrid`
-    only provides natural neighbor interpolation.
-
-    The natgrid matplotlib toolkit can be downloaded from
-    http://sourceforge.net/project/showfiles.php?group_id=80706&package_id=142792
-    """
-    try:
-        from mpl_toolkits.natgrid import _natgrid, __version__
-        _use_natgrid = True
-    except ImportError:
-        import matplotlib.delaunay as delaunay
-        from matplotlib.delaunay import  __version__
-        _use_natgrid = False
-    if not griddata._reported:
-        if _use_natgrid:
-            verbose.report('using natgrid version %s' % __version__)
-        else:
-            verbose.report('using delaunay version %s' % __version__)
-        griddata._reported = True
+    xi = np.asanyarray(xi, dtype=np.float64)
+    yi = np.asanyarray(yi, dtype=np.float64)
     if xi.ndim != yi.ndim:
-        raise TypeError("inputs xi and yi must have same number of dimensions (1 or 2)")
-    if xi.ndim != 1 and xi.ndim != 2:
-        raise TypeError("inputs xi and yi must be 1D or 2D.")
-    if not len(x)==len(y)==len(z):
-        raise TypeError("inputs x,y,z must all be 1D arrays of the same length")
-    # remove masked points.
-    if hasattr(z,'mask'):
-        # make sure mask is not a scalar boolean array.
-        if z.mask.ndim:
-            x = x.compress(z.mask == False)
-            y = y.compress(z.mask == False)
-            z = z.compressed()
-    if _use_natgrid: # use natgrid toolkit if available.
-        if interp != 'nn':
-            raise ValueError("only natural neighor interpolation"
-            " allowed when using natgrid toolkit in griddata.")
+        raise ValueError("xi and yi must be arrays with the same number of "
+                         "dimensions (1 or 2)")
+    if xi.ndim == 2 and xi.shape != yi.shape:
+        raise ValueError("if xi and yi are 2D arrays, they must have the same "
+                         "shape")
+    if xi.ndim == 1:
+        xi, yi = np.meshgrid(xi, yi)
+
+    if interp == 'nn':
+        use_nn_interpolation = True
+    elif interp == 'linear':
+        use_nn_interpolation = False
+    else:
+        raise ValueError("interp keyword must be one of 'linear' (for linear "
+                         "interpolation) or 'nn' (for natural neighbor "
+                         "interpolation).  Default is 'nn'.")
+
+    # Remove masked points.
+    mask = np.ma.getmask(z)
+    if not (mask is np.ma.nomask):
+        x = x.compress(~mask)
+        y = y.compress(~mask)
+        z = z.compressed()
+
+    if use_nn_interpolation:
+        try:
+            from mpl_toolkits.natgrid import _natgrid
+        except ImportError:
+            raise RuntimeError(
+                "To use interp='nn' (Natural Neighbor interpolation) in "
+                "griddata, natgrid must be installed. Either install it "
+                "from http://github.com/matplotlib/natgrid or use "
+                "interp='linear' instead.")
+
         if xi.ndim == 2:
-            xi = xi[0,:]
-            yi = yi[:,0]
-        # override default natgrid internal parameters.
-        _natgrid.seti('ext',0)
-        _natgrid.setr('nul',np.nan)
-        # cast input arrays to doubles (this makes a copy)
-        x = x.astype(np.float)
-        y = y.astype(np.float)
-        z = z.astype(np.float)
-        xo = xi.astype(np.float)
-        yo = yi.astype(np.float)
-        if min(xo[1:]-xo[0:-1]) < 0 or min(yo[1:]-yo[0:-1]) < 0:
-            raise ValueError, 'output grid defined by xi,yi must be monotone increasing'
-        # allocate array for output (buffer will be overwritten by nagridd)
-        zo = np.empty((yo.shape[0],xo.shape[0]), np.float)
-        _natgrid.natgridd(x,y,z,xo,yo,zo)
-    else: # use Robert Kern's delaunay package from scikits (default)
-        if xi.ndim != yi.ndim:
-            raise TypeError("inputs xi and yi must have same number of dimensions (1 or 2)")
-        if xi.ndim != 1 and xi.ndim != 2:
-            raise TypeError("inputs xi and yi must be 1D or 2D.")
-        if xi.ndim == 1:
-            xi,yi = np.meshgrid(xi,yi)
-        # triangulate data
-        tri = delaunay.Triangulation(x,y)
-        # interpolate data
-        if interp == 'nn':
-            interp = tri.nn_interpolator(z)
-            zo = interp(xi,yi)
-        elif interp == 'linear':
-            # make sure grid has constant dx, dy
-            dx = xi[0,1:]-xi[0,0:-1]
-            dy = yi[1:,0]-yi[0:-1,0]
-            epsx = np.finfo(xi.dtype).resolution
-            epsy = np.finfo(yi.dtype).resolution
-            if dx.max()-dx.min() > epsx or dy.max()-dy.min() > epsy:
-                raise ValueError("output grid must have constant spacing"
-                                 " when using interp='linear'")
-            interp = tri.linear_interpolator(z)
-            zo = interp[yi.min():yi.max():complex(0,yi.shape[0]),
-                        xi.min():xi.max():complex(0,xi.shape[1])]
-        else:
-            raise ValueError("interp keyword must be one of"
-            " 'linear' (for linear interpolation) or 'nn'"
-            " (for natural neighbor interpolation). Default is 'nn'.")
-    # mask points on grid outside convex hull of input data.
-    if np.any(np.isnan(zo)):
-        zo = np.ma.masked_where(np.isnan(zo),zo)
-    return zo
-griddata._reported = False
+            # natgrid expects 1D xi and yi arrays.
+            xi = xi[0, :]
+            yi = yi[:, 0]
+
+        # Override default natgrid internal parameters.
+        _natgrid.seti(b'ext', 0)
+        _natgrid.setr(b'nul', np.nan)
+
+        if np.min(np.diff(xi)) < 0 or np.min(np.diff(yi)) < 0:
+            raise ValueError("Output grid defined by xi,yi must be monotone "
+                             "increasing")
+
+        # Allocate array for output (buffer will be overwritten by natgridd)
+        zi = np.empty((yi.shape[0], xi.shape[0]), np.float64)
+
+        # Natgrid requires each array to be contiguous rather than e.g. a view
+        # that is a non-contiguous slice of another array.  Use numpy.require
+        # to deal with this, which will copy if necessary.
+        x = np.require(x, requirements=['C'])
+        y = np.require(y, requirements=['C'])
+        z = np.require(z, requirements=['C'])
+        xi = np.require(xi, requirements=['C'])
+        yi = np.require(yi, requirements=['C'])
+        _natgrid.natgridd(x, y, z, xi, yi, zi)
+
+        # Mask points on grid outside convex hull of input data.
+        if np.any(np.isnan(zi)):
+            zi = np.ma.masked_where(np.isnan(zi), zi)
+        return zi
+    else:
+        # Linear interpolation performed using a matplotlib.tri.Triangulation
+        # and a matplotlib.tri.LinearTriInterpolator.
+        from .tri import Triangulation, LinearTriInterpolator
+        triang = Triangulation(x, y)
+        interpolator = LinearTriInterpolator(triang, z)
+        return interpolator(xi, yi)
+
 
 ##################################################
 # Linear interpolation algorithms
 ##################################################
-def less_simple_linear_interpolation( x, y, xi, extrap=False ):
+def less_simple_linear_interpolation(x, y, xi, extrap=False):
     """
     This function provides simple (but somewhat less so than
     :func:`cbook.simple_linear_interpolation`) linear interpolation.
@@ -2809,7 +3477,8 @@ def less_simple_linear_interpolation( x, y, xi, extrap=False ):
     only for a small number of points in relatively non-intensive use
     cases.  For real linear interpolation, use scipy.
     """
-    if cbook.is_scalar(xi): xi = [xi]
+    if cbook.is_scalar(xi):
+        xi = [xi]
 
     x = np.asarray(x)
     y = np.asarray(y)
@@ -2817,28 +3486,29 @@ def less_simple_linear_interpolation( x, y, xi, extrap=False ):
 
     s = list(y.shape)
     s[0] = len(xi)
-    yi = np.tile( np.nan, s )
+    yi = np.tile(np.nan, s)
 
-    for ii,xx in enumerate(xi):
+    for ii, xx in enumerate(xi):
         bb = x == xx
         if np.any(bb):
             jj, = np.nonzero(bb)
             yi[ii] = y[jj[0]]
-        elif xx<x[0]:
+        elif xx < x[0]:
             if extrap:
                 yi[ii] = y[0]
-        elif xx>x[-1]:
+        elif xx > x[-1]:
             if extrap:
                 yi[ii] = y[-1]
         else:
-            jj, = np.nonzero(x<xx)
+            jj, = np.nonzero(x < xx)
             jj = max(jj)
 
             yi[ii] = y[jj] + (xx-x[jj])/(x[jj+1]-x[jj]) * (y[jj+1]-y[jj])
 
     return yi
 
-def slopes(x,y):
+
+def slopes(x, y):
     """
     :func:`slopes` calculates the slope *y*'(*x*)
 
@@ -2865,13 +3535,13 @@ def slopes(x,y):
     Icelandic Meteorological Office, March 2006 halldor at vedur.is)
     """
     # Cast key variables as float.
-    x=np.asarray(x, np.float_)
-    y=np.asarray(y, np.float_)
+    x = np.asarray(x, np.float_)
+    y = np.asarray(y, np.float_)
 
-    yp=np.zeros(y.shape, np.float_)
+    yp = np.zeros(y.shape, np.float_)
 
-    dx=x[1:] - x[:-1]
-    dy=y[1:] - y[:-1]
+    dx = x[1:] - x[:-1]
+    dy = y[1:] - y[:-1]
     dydx = dy/dx
     yp[1:-1] = (dydx[:-1] * dx[1:] + dydx[1:] * dx[:-1])/(dx[1:] + dx[:-1])
     yp[0] = 2.0 * dy[0]/dx[0] - yp[1]
@@ -2879,7 +3549,7 @@ def slopes(x,y):
     return yp
 
 
-def stineman_interp(xi,x,y,yp=None):
+def stineman_interp(xi, x, y, yp=None):
     """
     Given data vectors *x* and *y*, the slope vector *yp* and a new
     abscissa vector *xi*, the function :func:`stineman_interp` uses
@@ -2922,30 +3592,31 @@ def stineman_interp(xi,x,y,yp=None):
     """
 
     # Cast key variables as float.
-    x=np.asarray(x, np.float_)
-    y=np.asarray(y, np.float_)
-    assert x.shape == y.shape
-    N=len(y)
+    x = np.asarray(x, np.float_)
+    y = np.asarray(y, np.float_)
+    if x.shape != y.shape:
+        raise ValueError("'x' and 'y' must be of same shape")
 
     if yp is None:
-        yp = slopes(x,y)
+        yp = slopes(x, y)
     else:
-        yp=np.asarray(yp, np.float_)
+        yp = np.asarray(yp, np.float_)
 
-    xi=np.asarray(xi, np.float_)
-    yi=np.zeros(xi.shape, np.float_)
+    xi = np.asarray(xi, np.float_)
+    yi = np.zeros(xi.shape, np.float_)
 
     # calculate linear slopes
     dx = x[1:] - x[:-1]
     dy = y[1:] - y[:-1]
-    s = dy/dx  #note length of s is N-1 so last element is #N-2
+    s = dy/dx  # note length of s is N-1 so last element is #N-2
 
     # find the segment each xi is in
     # this line actually is the key to the efficiency of this implementation
     idx = np.searchsorted(x[1:-1], xi)
 
     # now we have generally: x[idx[j]] <= xi[j] <= x[idx[j]+1]
-    # except at the boundaries, where it may be that xi[j] < x[0] or xi[j] > x[-1]
+    # except at the boundaries, where it may be that xi[j] < x[0] or
+    # xi[j] > x[-1]
 
     # the y-values that would come out from a linear interpolation:
     sidx = s.take(idx)
@@ -2955,8 +3626,10 @@ def stineman_interp(xi,x,y,yp=None):
     yo = yidx + sidx * (xi - xidx)
 
     # the difference that comes when using the slopes given in yp
-    dy1 = (yp.take(idx)- sidx) * (xi - xidx)       # using the yp slope of the left point
-    dy2 = (yp.take(idx+1)-sidx) * (xi - xidxp1) # using the yp slope of the right point
+    # using the yp slope of the left point
+    dy1 = (yp.take(idx) - sidx) * (xi - xidx)
+    # using the yp slope of the right point
+    dy2 = (yp.take(idx+1)-sidx) * (xi - xidxp1)
 
     dy1dy2 = dy1*dy2
     # The following is optimized for Python. The solution actually
@@ -2969,6 +3642,168 @@ def stineman_interp(xi,x,y,yp=None):
                                   1/(dy1+dy2),))
     return yi
 
+
+class GaussianKDE(object):
+    """
+    Representation of a kernel-density estimate using Gaussian kernels.
+
+    Call signature::
+    kde = GaussianKDE(dataset, bw_method='silverman')
+
+    Parameters
+    ----------
+    dataset : array_like
+        Datapoints to estimate from. In case of univariate data this is a 1-D
+        array, otherwise a 2-D array with shape (# of dims, # of data).
+
+    bw_method : str, scalar or callable, optional
+        The method used to calculate the estimator bandwidth.  This can be
+        'scott', 'silverman', a scalar constant or a callable.  If a
+        scalar, this will be used directly as `kde.factor`.  If a
+        callable, it should take a `GaussianKDE` instance as only
+        parameter and return a scalar. If None (default), 'scott' is used.
+
+    Attributes
+    ----------
+    dataset : ndarray
+        The dataset with which `gaussian_kde` was initialized.
+
+    dim : int
+        Number of dimensions.
+
+    num_dp : int
+        Number of datapoints.
+
+    factor : float
+        The bandwidth factor, obtained from `kde.covariance_factor`, with which
+        the covariance matrix is multiplied.
+
+    covariance : ndarray
+        The covariance matrix of `dataset`, scaled by the calculated bandwidth
+        (`kde.factor`).
+
+    inv_cov : ndarray
+        The inverse of `covariance`.
+
+    Methods
+    -------
+    kde.evaluate(points) : ndarray
+        Evaluate the estimated pdf on a provided set of points.
+
+    kde(points) : ndarray
+        Same as kde.evaluate(points)
+
+    """
+
+    # This implementation with minor modification was too good to pass up.
+    # from scipy: https://github.com/scipy/scipy/blob/master/scipy/stats/kde.py
+
+    def __init__(self, dataset, bw_method=None):
+        self.dataset = np.atleast_2d(dataset)
+        if not np.array(self.dataset).size > 1:
+            raise ValueError("`dataset` input should have multiple elements.")
+
+        self.dim, self.num_dp = np.array(self.dataset).shape
+        isString = isinstance(bw_method, six.string_types)
+
+        if bw_method is None:
+            pass
+        elif (isString and bw_method == 'scott'):
+            self.covariance_factor = self.scotts_factor
+        elif (isString and bw_method == 'silverman'):
+            self.covariance_factor = self.silverman_factor
+        elif (np.isscalar(bw_method) and not isString):
+                self._bw_method = 'use constant'
+                self.covariance_factor = lambda: bw_method
+        elif callable(bw_method):
+            self._bw_method = bw_method
+            self.covariance_factor = lambda: self._bw_method(self)
+        else:
+            msg = "`bw_method` should be 'scott', 'silverman', a scalar " \
+                  "or a callable."
+            raise ValueError(msg)
+
+        # Computes the covariance matrix for each Gaussian kernel using
+        # covariance_factor().
+
+        self.factor = self.covariance_factor()
+        # Cache covariance and inverse covariance of the data
+        if not hasattr(self, '_data_inv_cov'):
+            self.data_covariance = np.atleast_2d(
+                np.cov(
+                    self.dataset,
+                    rowvar=1,
+                    bias=False))
+            self.data_inv_cov = np.linalg.inv(self.data_covariance)
+
+        self.covariance = self.data_covariance * self.factor ** 2
+        self.inv_cov = self.data_inv_cov / self.factor ** 2
+        self.norm_factor = np.sqrt(
+            np.linalg.det(
+                2 * np.pi * self.covariance)) * self.num_dp
+
+    def scotts_factor(self):
+        return np.power(self.num_dp, -1. / (self.dim + 4))
+
+    def silverman_factor(self):
+        return np.power(
+            self.num_dp * (self.dim + 2.0) / 4.0, -1. / (self.dim + 4))
+
+    #  Default method to calculate bandwidth, can be overwritten by subclass
+    covariance_factor = scotts_factor
+
+    def evaluate(self, points):
+        """Evaluate the estimated pdf on a set of points.
+
+        Parameters
+        ----------
+        points : (# of dimensions, # of points)-array
+            Alternatively, a (# of dimensions,) vector can be passed in and
+            treated as a single point.
+
+        Returns
+        -------
+        values : (# of points,)-array
+            The values at each point.
+
+        Raises
+        ------
+        ValueError : if the dimensionality of the input points is different
+                     than the dimensionality of the KDE.
+
+        """
+        points = np.atleast_2d(points)
+
+        dim, num_m = np.array(points).shape
+        if dim != self.dim:
+            msg = "points have dimension %s, dataset has dimension %s" % (
+                dim, self.dim)
+            raise ValueError(msg)
+
+        result = np.zeros((num_m,), dtype=np.float)
+
+        if num_m >= self.num_dp:
+            # there are more points than data, so loop over data
+            for i in range(self.num_dp):
+                diff = self.dataset[:, i, np.newaxis] - points
+                tdiff = np.dot(self.inv_cov, diff)
+                energy = np.sum(diff * tdiff, axis=0) / 2.0
+                result = result + np.exp(-energy)
+        else:
+            # loop over points
+            for i in range(num_m):
+                diff = self.dataset - points[:, i, np.newaxis]
+                tdiff = np.dot(self.inv_cov, diff)
+                energy = np.sum(diff * tdiff, axis=0) / 2.0
+                result[i] = np.sum(np.exp(-energy), axis=0)
+
+        result = result / self.norm_factor
+
+        return result
+
+    __call__ = evaluate
+
+
 ##################################################
 # Code related to things in and around polygons
 ##################################################
@@ -2980,8 +3815,12 @@ def inside_poly(points, verts):
     Return value is a sequence of indices into points for the points
     that are inside the polygon.
     """
-    res, =  np.nonzero(nxutils.points_inside_poly(points, verts))
-    return res
+    # Make a closed polygon path
+    poly = Path(verts)
+
+    # Check to see which points are contained withing the Path
+    return [idx for idx, p in enumerate(points) if poly.contains_point(p)]
+
 
 def poly_below(xmin, xs, ys):
     """
@@ -2989,28 +3828,28 @@ def poly_below(xmin, xs, ys):
     polygon that has a horizontal base at *xmin* and an upper bound at
     the *ys*.  *xmin* is a scalar.
 
-    Intended for use with :meth:`matplotlib.axes.Axes.fill`, eg::
+    Intended for use with :meth:`matplotlib.axes.Axes.fill`, e.g.,::
 
       xv, yv = poly_below(0, x, y)
       ax.fill(xv, yv)
     """
     if ma.isMaskedArray(xs) or ma.isMaskedArray(ys):
-        nx = ma
+        numpy = ma
     else:
-        nx = np
+        numpy = np
 
-    xs = nx.asarray(xs)
-    ys = nx.asarray(ys)
+    xs = numpy.asarray(xs)
+    ys = numpy.asarray(ys)
     Nx = len(xs)
     Ny = len(ys)
-    assert(Nx==Ny)
-    x = xmin*nx.ones(2*Nx)
-    y = nx.ones(2*Nx)
+    if Nx != Ny:
+        raise ValueError("'xs' and 'ys' must have the same length")
+    x = xmin*numpy.ones(2*Nx)
+    y = numpy.ones(2*Nx)
     x[:Nx] = xs
     y[:Nx] = ys
     y[Nx:] = ys[::-1]
     return x, y
-
 
 
 def poly_between(x, ylower, yupper):
@@ -3023,21 +3862,22 @@ def poly_between(x, ylower, yupper):
     Return value is *x*, *y* arrays for use with
     :meth:`matplotlib.axes.Axes.fill`.
     """
-    if ma.isMaskedArray(ylower) or ma.isMaskedArray(yupper) or ma.isMaskedArray(x):
-        nx = ma
+    if (ma.isMaskedArray(ylower) or ma.isMaskedArray(yupper) or
+            ma.isMaskedArray(x)):
+        numpy = ma
     else:
-        nx = np
+        numpy = np
 
     Nx = len(x)
     if not cbook.iterable(ylower):
-        ylower = ylower*nx.ones(Nx)
+        ylower = ylower*numpy.ones(Nx)
 
     if not cbook.iterable(yupper):
-        yupper = yupper*nx.ones(Nx)
+        yupper = yupper*numpy.ones(Nx)
 
-    x = nx.concatenate( (x, x[::-1]) )
-    y = nx.concatenate( (yupper, ylower[::-1]) )
-    return x,y
+    x = numpy.concatenate((x, x[::-1]))
+    y = numpy.concatenate((yupper, ylower[::-1]))
+    return x, y
 
 
 def is_closed_polygon(X):
@@ -3053,28 +3893,32 @@ def contiguous_regions(mask):
     """
     return a list of (ind0, ind1) such that mask[ind0:ind1].all() is
     True and we cover all such regions
-
-    TODO: this is a pure python implementation which probably has a much faster numpy impl
     """
+    mask = np.asarray(mask, dtype=bool)
 
-    in_region = None
-    boundaries = []
-    for i, val in enumerate(mask):
-        if in_region is None and val:
-            in_region = i
-        elif in_region is not None and not val:
-            boundaries.append((in_region, i))
-            in_region = None
+    if not mask.size:
+        return []
 
-    if in_region is not None:
-        boundaries.append((in_region, i+1))
-    return boundaries
+    # Find the indices of region changes, and correct offset
+    idx, = np.nonzero(mask[:-1] != mask[1:])
+    idx += 1
+
+    # List operations are faster for moderately sized arrays
+    idx = idx.tolist()
+
+    # Add first and/or last index if needed
+    if mask[0]:
+        idx = [0] + idx
+    if mask[-1]:
+        idx.append(len(mask))
+
+    return list(zip(idx[::2], idx[1::2]))
 
 
 def cross_from_below(x, threshold):
     """
     return the indices into *x* where *x* crosses some threshold from
-    below, eg the i's where::
+    below, e.g., the i's where::
 
       x[i-1]<threshold and x[i]>=threshold
 
@@ -3106,14 +3950,17 @@ def cross_from_below(x, threshold):
     """
     x = np.asarray(x)
     threshold = threshold
-    ind = np.nonzero( (x[:-1]<threshold) & (x[1:]>=threshold))[0]
-    if len(ind): return ind+1
-    else: return ind
+    ind = np.nonzero((x[:-1] < threshold) & (x[1:] >= threshold))[0]
+    if len(ind):
+        return ind+1
+    else:
+        return ind
+
 
 def cross_from_above(x, threshold):
     """
     return the indices into *x* where *x* crosses some threshold from
-    below, eg the i's where::
+    below, e.g., the i's where::
 
       x[i-1]>threshold and x[i]<=threshold
 
@@ -3123,14 +3970,17 @@ def cross_from_above(x, threshold):
 
     """
     x = np.asarray(x)
-    ind = np.nonzero( (x[:-1]>=threshold) & (x[1:]<threshold))[0]
-    if len(ind): return ind+1
-    else: return ind
+    ind = np.nonzero((x[:-1] >= threshold) & (x[1:] < threshold))[0]
+    if len(ind):
+        return ind+1
+    else:
+        return ind
+
 
 ##################################################
 # Vector and path length geometry calculations
 ##################################################
-def vector_lengths( X, P=2., axis=None ):
+def vector_lengths(X, P=2., axis=None):
     """
     Finds the length of a set of vectors in *n* dimensions.  This is
     like the :func:`numpy.norm` function for vectors, but has the ability to
@@ -3141,9 +3991,10 @@ def vector_lengths( X, P=2., axis=None ):
     compute over all elements of *X*.
     """
     X = np.asarray(X)
-    return (np.sum(X**(P),axis=axis))**(1./P)
+    return (np.sum(X**(P), axis=axis))**(1./P)
 
-def distances_along_curve( X ):
+
+def distances_along_curve(X):
     """
     Computes the distance between a set of successive points in *N* dimensions.
 
@@ -3151,8 +4002,9 @@ def distances_along_curve( X ):
     successive rows is computed.  Distance is the standard Euclidean
     distance.
     """
-    X = np.diff( X, axis=0 )
-    return vector_lengths(X,axis=1)
+    X = np.diff(X, axis=0)
+    return vector_lengths(X, axis=1)
+
 
 def path_length(X):
     """
@@ -3163,7 +4015,8 @@ def path_length(X):
     (i.e., the rows of *X*).
     """
     X = distances_along_curve(X)
-    return np.concatenate( (np.zeros(1), np.cumsum(X)) )
+    return np.concatenate((np.zeros(1), np.cumsum(X)))
+
 
 def quad2cubic(q0x, q0y, q1x, q1y, q2x, q2y):
     """
@@ -3173,8 +4026,43 @@ def quad2cubic(q0x, q0y, q1x, q1y, q2x, q2y):
     points of a quadratic curve, and the output is a tuple of *x* and
     *y* coordinates of the four control points of the cubic curve.
     """
+    # TODO: Candidate for deprecation -- no longer used internally
+
     # c0x, c0y = q0x, q0y
     c1x, c1y = q0x + 2./3. * (q1x - q0x), q0y + 2./3. * (q1y - q0y)
     c2x, c2y = c1x + 1./3. * (q2x - q0x), c1y + 1./3. * (q2y - q0y)
     # c3x, c3y = q2x, q2y
     return q0x, q0y, c1x, c1y, c2x, c2y, q2x, q2y
+
+
+def offset_line(y, yerr):
+    """
+    Offsets an array *y* by +/- an error and returns a tuple
+    (y - err, y + err).
+
+    The error term can be:
+
+    * A scalar. In this case, the returned tuple is obvious.
+    * A vector of the same length as *y*. The quantities y +/- err are computed
+      component-wise.
+    * A tuple of length 2. In this case, yerr[0] is the error below *y* and
+      yerr[1] is error above *y*. For example::
+
+        from pylab import *
+        x = linspace(0, 2*pi, num=100, endpoint=True)
+        y = sin(x)
+        y_minus, y_plus = mlab.offset_line(y, 0.1)
+        plot(x, y)
+        fill_between(x, ym, y2=yp)
+        show()
+
+    """
+    if cbook.is_numlike(yerr) or (cbook.iterable(yerr) and
+                                  len(yerr) == len(y)):
+        ymin = y - yerr
+        ymax = y + yerr
+    elif len(yerr) == 2:
+        ymin, ymax = y - yerr[0], y + yerr[1]
+    else:
+        raise ValueError("yerr must be scalar, 1xN or 2xN")
+    return ymin, ymax

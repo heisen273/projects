@@ -1,3 +1,5 @@
+from __future__ import division, absolute_import, print_function
+
 import re
 import os
 import sys
@@ -14,7 +16,7 @@ from distutils.version import LooseVersion
 from numpy.distutils import log
 from numpy.distutils.exec_command import exec_command
 from numpy.distutils.misc_util import cyg2win32, is_sequence, mingw32, \
-                                      quote_args, msvc_on_amd64
+                                      quote_args, get_num_build_jobs
 from numpy.distutils.compat import get_exception
 
 
@@ -54,7 +56,7 @@ def CCompiler_spawn(self, cmd, display=None):
         if is_sequence(display):
             display = ' '.join(list(display))
     log.info(display)
-    s,o = exec_command(cmd)
+    s, o = exec_command(cmd)
     if s:
         if is_sequence(cmd):
             cmd = ' '.join(list(cmd))
@@ -112,7 +114,7 @@ def CCompiler_object_filenames(self, source_filenames, strip_dir=0, output_dir='
             raise UnknownFileError("unknown file type '%s' (from '%s')" % (ext, src_name))
         if strip_dir:
             base = os.path.basename(base)
-        obj_name = os.path.join(output_dir,base + self.obj_extension)
+        obj_name = os.path.join(output_dir, base + self.obj_extension)
         obj_names.append(obj_name)
     return obj_names
 
@@ -163,13 +165,14 @@ def CCompiler_compile(self, sources, output_dir=None, macros=None,
         return []
     # FIXME:RELATIVE_IMPORT
     if sys.version_info[0] < 3:
-        from fcompiler import FCompiler
+        from .fcompiler import FCompiler, is_f_file, has_f90_header
     else:
-        from numpy.distutils.fcompiler import FCompiler
+        from numpy.distutils.fcompiler import (FCompiler, is_f_file,
+                                               has_f90_header)
     if isinstance(self, FCompiler):
         display = []
-        for fc in ['f77','f90','fix']:
-            fcomp = getattr(self,'compiler_'+fc)
+        for fc in ['f77', 'f90', 'fix']:
+            fcomp = getattr(self, 'compiler_'+fc)
             if fcomp is None:
                 continue
             display.append("Fortran %s compiler: %s" % (fc, ' '.join(fcomp)))
@@ -187,20 +190,45 @@ def CCompiler_compile(self, sources, output_dir=None, macros=None,
         display += "\nextra options: '%s'" % (' '.join(extra_postargs))
     log.info(display)
 
-    # build any sources in same order as they were originally specified
-    #   especially important for fortran .f90 files using modules
+    def single_compile(args):
+        obj, (src, ext) = args
+        self._compile(obj, src, ext, cc_args, extra_postargs, pp_opts)
+
     if isinstance(self, FCompiler):
-        objects_to_build = build.keys()
+        objects_to_build = list(build.keys())
+        f77_objects, other_objects = [], []
         for obj in objects:
             if obj in objects_to_build:
                 src, ext = build[obj]
                 if self.compiler_type=='absoft':
                     obj = cyg2win32(obj)
                     src = cyg2win32(src)
-                self._compile(obj, src, ext, cc_args, extra_postargs, pp_opts)
+                if is_f_file(src) and not has_f90_header(src):
+                    f77_objects.append((obj, (src, ext)))
+                else:
+                    other_objects.append((obj, (src, ext)))
+
+        # f77 objects can be built in parallel
+        build_items = f77_objects
+        # build f90 modules serial, module files are generated during
+        # compilation and may be used by files later in the list so the
+        # ordering is important
+        for o in other_objects:
+            single_compile(o)
     else:
-        for obj, (src, ext) in build.items():
-            self._compile(obj, src, ext, cc_args, extra_postargs, pp_opts)
+        build_items = build.items()
+
+    jobs = get_num_build_jobs()
+    if len(build) > 1 and jobs > 1:
+        # build parallel
+        import multiprocessing.pool
+        pool = multiprocessing.pool.ThreadPool(jobs)
+        pool.map(single_compile, build_items)
+        pool.close()
+    else:
+        # build serial
+        for o in build_items:
+            single_compile(o)
 
     # Return *all* object filenames, not just the ones we just built.
     return objects
@@ -234,7 +262,7 @@ def CCompiler_customize_cmd(self, cmd, ignore=()):
     if allow('include_dirs'):
         self.set_include_dirs(cmd.include_dirs)
     if allow('define'):
-        for (name,value) in cmd.define:
+        for (name, value) in cmd.define:
             self.define_macro(name, value)
     if allow('undef'):
         for macro in cmd.undef:
@@ -253,17 +281,17 @@ replace_method(CCompiler, 'customize_cmd', CCompiler_customize_cmd)
 def _compiler_to_string(compiler):
     props = []
     mx = 0
-    keys = compiler.executables.keys()
-    for key in ['version','libraries','library_dirs',
-                'object_switch','compile_switch',
-                'include_dirs','define','undef','rpath','link_objects']:
+    keys = list(compiler.executables.keys())
+    for key in ['version', 'libraries', 'library_dirs',
+                'object_switch', 'compile_switch',
+                'include_dirs', 'define', 'undef', 'rpath', 'link_objects']:
         if key not in keys:
             keys.append(key)
     for key in keys:
-        if hasattr(compiler,key):
+        if hasattr(compiler, key):
             v = getattr(compiler, key)
-            mx = max(mx,len(key))
-            props.append((key,repr(v)))
+            mx = max(mx, len(key))
+            props.append((key, repr(v)))
     lines = []
     format = '%-' + repr(mx+1) + 's = %s'
     for prop in props:
@@ -288,13 +316,13 @@ def CCompiler_show_customization(self):
 
     """
     if 0:
-        for attrname in ['include_dirs','define','undef',
-                         'libraries','library_dirs',
-                         'rpath','link_objects']:
-            attr = getattr(self,attrname,None)
+        for attrname in ['include_dirs', 'define', 'undef',
+                         'libraries', 'library_dirs',
+                         'rpath', 'link_objects']:
+            attr = getattr(self, attrname, None)
             if not attr:
                 continue
-            log.info("compiler '%s' is set to %s" % (attrname,attr))
+            log.info("compiler '%s' is set to %s" % (attrname, attr))
     try:
         self.get_version()
     except:
@@ -349,18 +377,19 @@ def CCompiler_customize(self, dist, need_cxx=0):
         except (AttributeError, ValueError):
             pass
 
-        if hasattr(self,'compiler') and 'cc' in self.compiler[0]:
+        if hasattr(self, 'compiler') and 'cc' in self.compiler[0]:
             if not self.compiler_cxx:
                 if self.compiler[0].startswith('gcc'):
                     a, b = 'gcc', 'g++'
                 else:
                     a, b = 'cc', 'c++'
-                self.compiler_cxx = [self.compiler[0].replace(a,b)]\
+                self.compiler_cxx = [self.compiler[0].replace(a, b)]\
                                     + self.compiler[1:]
         else:
-            if hasattr(self,'compiler'):
+            if hasattr(self, 'compiler'):
                 log.warn("#### %s #######" % (self.compiler,))
-            log.warn('Missing compiler_cxx fix for '+self.__class__.__name__)
+            if not hasattr(self, 'compiler_cxx'):
+                log.warn('Missing compiler_cxx fix for ' + self.__class__.__name__)
     return
 
 replace_method(CCompiler, 'customize', CCompiler_customize)
@@ -394,14 +423,14 @@ def simple_version_match(pat=r'[-.\d]+', ignore='', start=''):
     def matcher(self, version_string):
         # version string may appear in the second line, so getting rid
         # of new lines:
-        version_string = version_string.replace('\n',' ')
+        version_string = version_string.replace('\n', ' ')
         pos = 0
         if start:
             m = re.match(start, version_string)
             if not m:
                 return None
             pos = m.end()
-        while 1:
+        while True:
             m = re.search(pat, version_string[pos:])
             if not m:
                 return None
@@ -432,7 +461,7 @@ def CCompiler_get_version(self, force=False, ok_status=[0]):
         Version string, in the format of `distutils.version.LooseVersion`.
 
     """
-    if not force and hasattr(self,'version'):
+    if not force and hasattr(self, 'version'):
         return self.version
     self.find_executables()
     try:
@@ -455,7 +484,7 @@ def CCompiler_get_version(self, force=False, ok_status=[0]):
             version = m.group('version')
             return version
 
-    status, output = exec_command(version_cmd,use_tee=0)
+    status, output = exec_command(version_cmd, use_tee=0)
 
     version = None
     if status in ok_status:
@@ -481,7 +510,9 @@ def CCompiler_cxx_compiler(self):
         The C++ compiler, as a `CCompiler` instance.
 
     """
-    if self.compiler_type=='msvc': return self
+    if self.compiler_type in ('msvc', 'intelw', 'intelemw'):
+        return self
+
     cxx = copy(self)
     cxx.compiler_so = [cxx.compiler_cxx[0]] + cxx.compiler_so[1:]
     if sys.platform.startswith('aix') and 'ld_so_aix' in cxx.linker_so[0]:
@@ -494,18 +525,24 @@ def CCompiler_cxx_compiler(self):
 
 replace_method(CCompiler, 'cxx_compiler', CCompiler_cxx_compiler)
 
-compiler_class['intel'] = ('intelccompiler','IntelCCompiler',
+compiler_class['intel'] = ('intelccompiler', 'IntelCCompiler',
                            "Intel C Compiler for 32-bit applications")
-compiler_class['intele'] = ('intelccompiler','IntelItaniumCCompiler',
-                           "Intel C Itanium Compiler for Itanium-based applications")
-compiler_class['intelem'] = ('intelccompiler','IntelEM64TCCompiler',
+compiler_class['intele'] = ('intelccompiler', 'IntelItaniumCCompiler',
+                            "Intel C Itanium Compiler for Itanium-based applications")
+compiler_class['intelem'] = ('intelccompiler', 'IntelEM64TCCompiler',
                              "Intel C Compiler for 64-bit applications")
-compiler_class['pathcc'] = ('pathccompiler','PathScaleCCompiler',
+compiler_class['intelw'] = ('intelccompiler', 'IntelCCompilerW',
+                            "Intel C Compiler for 32-bit applications on Windows")
+compiler_class['intelemw'] = ('intelccompiler', 'IntelEM64TCCompilerW',
+                              "Intel C Compiler for 64-bit applications on Windows")
+compiler_class['pathcc'] = ('pathccompiler', 'PathScaleCCompiler',
                             "PathScale Compiler for SiCortex-based applications")
-ccompiler._default_compilers += (('linux.*','intel'),
-                                 ('linux.*','intele'),
-                                 ('linux.*','intelem'),
-                                 ('linux.*','pathcc'))
+ccompiler._default_compilers += (('linux.*', 'intel'),
+                                 ('linux.*', 'intele'),
+                                 ('linux.*', 'intelem'),
+                                 ('linux.*', 'pathcc'),
+                                 ('nt', 'intelw'),
+                                 ('nt', 'intelemw'))
 
 if sys.platform == 'win32':
     compiler_class['mingw32'] = ('mingw32ccompiler', 'Mingw32CCompiler',
@@ -581,8 +618,8 @@ ccompiler.gen_lib_options = gen_lib_options
 # Also fix up the various compiler modules, which do
 # from distutils.ccompiler import gen_lib_options
 # Don't bother with mwerks, as we don't support Classic Mac.
-for _cc in ['msvc', 'bcpp', 'cygwinc', 'emxc', 'unixc']:
-    _m = sys.modules.get('distutils.'+_cc+'compiler')
+for _cc in ['msvc9', 'msvc', 'bcpp', 'cygwinc', 'emxc', 'unixc']:
+    _m = sys.modules.get('distutils.' + _cc + 'compiler')
     if _m is not None:
         setattr(_m, 'gen_lib_options', gen_lib_options)
 
@@ -652,6 +689,3 @@ def split_quoted(s):
     return words
 ccompiler.split_quoted = split_quoted
 ##Fix distutils.util.split_quoted:
-
-# define DISTUTILS_USE_SDK when necessary to workaround distutils/msvccompiler.py bug
-msvc_on_amd64()

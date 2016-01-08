@@ -1,14 +1,16 @@
 """
 Machine arithmetics - determine the parameters of the
 floating-point arithmetic system
-"""
-# Author: Pearu Peterson, September 2003
 
+Author: Pearu Peterson, September 2003
+
+"""
+from __future__ import division, absolute_import, print_function
 
 __all__ = ['MachAr']
 
 from numpy.core.fromnumeric import any
-from numpy.core.numeric import seterr
+from numpy.core.numeric import errstate
 
 # Need to speed this up...especially for longfloat
 
@@ -92,24 +94,24 @@ class MachAr(object):
            Cambridge University Press, 2002, p. 31.
 
     """
+
     def __init__(self, float_conv=float,int_conv=int,
                  float_to_float=float,
-                 float_to_str = lambda v:'%24.16e' % v,
-                 title = 'Python floating point number'):
+                 float_to_str=lambda v:'%24.16e' % v,
+                 title='Python floating point number'):
         """
-          float_conv - convert integer to float (array)
-          int_conv   - convert float (array) to integer
-          float_to_float - convert float array to float
-          float_to_str - convert array float to str
-          title        - description of used floating point numbers
+
+        float_conv - convert integer to float (array)
+        int_conv   - convert float (array) to integer
+        float_to_float - convert float array to float
+        float_to_str - convert array float to str
+        title        - description of used floating point numbers
+
         """
         # We ignore all errors here because we are purposely triggering
         # underflow to detect the properties of the runninng arch.
-        saverrstate = seterr(under='ignore')
-        try:
+        with errstate(under='ignore'):
             self._do_init(float_conv, int_conv, float_to_float, float_to_str, title)
-        finally:
-            seterr(**saverrstate)
 
     def _do_init(self, float_conv, int_conv, float_to_float, float_to_str, title):
         max_iterN = 10000
@@ -121,30 +123,30 @@ class MachAr(object):
         # Do we really need to do this?  Aren't they 2 and 2.0?
         # Determine ibeta and beta
         a = one
-        for _ in xrange(max_iterN):
+        for _ in range(max_iterN):
             a = a + a
             temp = a + one
             temp1 = temp - a
             if any(temp1 - one != zero):
                 break
         else:
-            raise RuntimeError, msg % (_, one.dtype)
+            raise RuntimeError(msg % (_, one.dtype))
         b = one
-        for _ in xrange(max_iterN):
+        for _ in range(max_iterN):
             b = b + b
             temp = a + b
             itemp = int_conv(temp-a)
             if any(itemp != 0):
                 break
         else:
-            raise RuntimeError, msg % (_, one.dtype)
+            raise RuntimeError(msg % (_, one.dtype))
         ibeta = itemp
         beta = float_conv(ibeta)
 
         # Determine it and irnd
         it = -1
         b = one
-        for _ in xrange(max_iterN):
+        for _ in range(max_iterN):
             it = it + 1
             b = b * beta
             temp = b + one
@@ -152,25 +154,25 @@ class MachAr(object):
             if any(temp1 - one != zero):
                 break
         else:
-            raise RuntimeError, msg % (_, one.dtype)
+            raise RuntimeError(msg % (_, one.dtype))
 
         betah = beta / two
         a = one
-        for _ in xrange(max_iterN):
+        for _ in range(max_iterN):
             a = a + a
             temp = a + one
             temp1 = temp - a
             if any(temp1 - one != zero):
                 break
         else:
-            raise RuntimeError, msg % (_, one.dtype)
+            raise RuntimeError(msg % (_, one.dtype))
         temp = a + betah
         irnd = 0
         if any(temp-a != zero):
             irnd = 1
         tempa = a + beta
         temp = tempa + betah
-        if irnd==0 and any(temp-tempa != zero):
+        if irnd == 0 and any(temp-tempa != zero):
             irnd = 2
 
         # Determine negep and epsneg
@@ -180,7 +182,7 @@ class MachAr(object):
         for i in range(negep):
             a = a * betain
         b = a
-        for _ in xrange(max_iterN):
+        for _ in range(max_iterN):
             temp = one - a
             if any(temp-one != zero):
                 break
@@ -188,10 +190,10 @@ class MachAr(object):
             negep = negep - 1
             # Prevent infinite loop on PPC with gcc 4.0:
             if negep < 0:
-                raise RuntimeError, "could not determine machine tolerance " \
-                                    "for 'negep', locals() -> %s" % (locals())
+                raise RuntimeError("could not determine machine tolerance "
+                                   "for 'negep', locals() -> %s" % (locals()))
         else:
-            raise RuntimeError, msg % (_, one.dtype)
+            raise RuntimeError(msg % (_, one.dtype))
         negep = -negep
         epsneg = a
 
@@ -199,20 +201,20 @@ class MachAr(object):
         machep = - it - 3
         a = b
 
-        for _ in xrange(max_iterN):
+        for _ in range(max_iterN):
             temp = one + a
             if any(temp-one != zero):
                 break
             a = a * beta
             machep = machep + 1
         else:
-            raise RuntimeError, msg % (_, one.dtype)
+            raise RuntimeError(msg % (_, one.dtype))
         eps = a
 
         # Determine ngrd
         ngrd = 0
         temp = one + eps
-        if irnd==0 and any(temp*one - one != zero):
+        if irnd == 0 and any(temp*one - one != zero):
             ngrd = 1
 
         # Determine iexp
@@ -221,12 +223,12 @@ class MachAr(object):
         z = betain
         t = one + eps
         nxres = 0
-        for _ in xrange(max_iterN):
+        for _ in range(max_iterN):
             y = z
             z = y*y
-            a = z*one # Check here for underflow
+            a = z*one  # Check here for underflow
             temp = z*t
-            if any(a+a == zero) or any(abs(z)>=y):
+            if any(a+a == zero) or any(abs(z) >= y):
                 break
             temp1 = temp * betain
             if any(temp1*beta == z):
@@ -234,7 +236,7 @@ class MachAr(object):
             i = i + 1
             k = k + k
         else:
-            raise RuntimeError, msg % (_, one.dtype)
+            raise RuntimeError(msg % (_, one.dtype))
         if ibeta != 10:
             iexp = i + 1
             mx = k + k
@@ -247,12 +249,12 @@ class MachAr(object):
             mx = iz + iz - 1
 
         # Determine minexp and xmin
-        for _ in xrange(max_iterN):
+        for _ in range(max_iterN):
             xmin = y
             y = y * betain
             a = y * one
             temp = y * t
-            if any(a+a != zero) and any(abs(y) < xmin):
+            if any((a + a) != zero) and any(abs(y) < xmin):
                 k = k + 1
                 temp1 = temp * betain
                 if any(temp1*beta == y) and any(temp != y):
@@ -262,7 +264,7 @@ class MachAr(object):
             else:
                 break
         else:
-            raise RuntimeError, msg % (_, one.dtype)
+            raise RuntimeError(msg % (_, one.dtype))
         minexp = -k
 
         # Determine maxexp, xmax
@@ -286,7 +288,7 @@ class MachAr(object):
         xmax = xmax / (xmin*beta*beta*beta)
         i = maxexp + minexp + 3
         for j in range(i):
-            if ibeta==2:
+            if ibeta == 2:
                 xmax = xmax + xmax
             else:
                 xmax = xmax * beta
@@ -323,17 +325,18 @@ class MachAr(object):
         self._str_resolution = float_to_str(resolution)
 
     def __str__(self):
-        return '''\
-Machine parameters for %(title)s
----------------------------------------------------------------------
-ibeta=%(ibeta)s it=%(it)s iexp=%(iexp)s ngrd=%(ngrd)s irnd=%(irnd)s
-machep=%(machep)s     eps=%(_str_eps)s (beta**machep == epsilon)
-negep =%(negep)s  epsneg=%(_str_epsneg)s (beta**epsneg)
-minexp=%(minexp)s   xmin=%(_str_xmin)s (beta**minexp == tiny)
-maxexp=%(maxexp)s    xmax=%(_str_xmax)s ((1-epsneg)*beta**maxexp == huge)
----------------------------------------------------------------------
-''' % self.__dict__
+        fmt = (
+           'Machine parameters for %(title)s\n'
+           '---------------------------------------------------------------------\n'
+           'ibeta=%(ibeta)s it=%(it)s iexp=%(iexp)s ngrd=%(ngrd)s irnd=%(irnd)s\n'
+           'machep=%(machep)s     eps=%(_str_eps)s (beta**machep == epsilon)\n'
+           'negep =%(negep)s  epsneg=%(_str_epsneg)s (beta**epsneg)\n'
+           'minexp=%(minexp)s   xmin=%(_str_xmin)s (beta**minexp == tiny)\n'
+           'maxexp=%(maxexp)s    xmax=%(_str_xmax)s ((1-epsneg)*beta**maxexp == huge)\n'
+           '---------------------------------------------------------------------\n'
+           )
+        return fmt % self.__dict__
 
 
 if __name__ == '__main__':
-    print MachAr()
+    print(MachAr())

@@ -35,17 +35,17 @@ may now proceed to calculate the mean of the other values:
 .. [1] Not-a-Number, a floating point value that is the result of an
        invalid operation.
 
+.. moduleauthor:: Pierre Gerard-Marchant
+.. moduleauthor:: Jarrod Millman
+
 """
-__author__ = "Pierre GF Gerard-Marchant ($Author: jarrod.millman $)"
-__version__ = '1.0'
-__revision__ = "$Revision: 3473 $"
-__date__     = '$Date: 2007-10-29 17:18:13 +0200 (Mon, 29 Oct 2007) $'
+from __future__ import division, absolute_import, print_function
 
-import core
-from core import *
+from . import core
+from .core import *
 
-import extras
-from extras import *
+from . import extras
+from .extras import *
 
 __all__ = ['core', 'extras']
 __all__ += core.__all__

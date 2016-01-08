@@ -1,24 +1,29 @@
-__all__ = ['ravel_multi_index',
-           'unravel_index',
-           'mgrid',
-           'ogrid',
-           'r_', 'c_', 's_',
-           'index_exp', 'ix_',
-           'ndenumerate','ndindex',
-           'fill_diagonal','diag_indices','diag_indices_from']
+from __future__ import division, absolute_import, print_function
 
 import sys
-import numpy.core.numeric as _nx
-from numpy.core.numeric import ( asarray, ScalarType, array, alltrue, cumprod,
-                                 arange )
-from numpy.core.numerictypes import find_common_type
 import math
 
-import function_base
+import numpy.core.numeric as _nx
+from numpy.core.numeric import (
+    asarray, ScalarType, array, alltrue, cumprod, arange
+    )
+from numpy.core.numerictypes import find_common_type, issubdtype
+
+from . import function_base
 import numpy.matrixlib as matrix
-from function_base import diff
-from numpy.lib._compiled_base import ravel_multi_index, unravel_index
+from .function_base import diff
+from numpy.core.multiarray import ravel_multi_index, unravel_index
+from numpy.lib.stride_tricks import as_strided
+
 makemat = matrix.matrix
+
+
+__all__ = [
+    'ravel_multi_index', 'unravel_index', 'mgrid', 'ogrid', 'r_', 'c_',
+    's_', 'index_exp', 'ix_', 'ndenumerate', 'ndindex', 'fill_diagonal',
+    'diag_indices', 'diag_indices_from'
+    ]
+
 
 def ix_(*args):
     """
@@ -66,17 +71,17 @@ def ix_(*args):
     """
     out = []
     nd = len(args)
-    baseshape = [1]*nd
-    for k in range(nd):
-        new = _nx.asarray(args[k])
-        if (new.ndim != 1):
-            raise ValueError, "Cross index must be 1 dimensional"
-        if issubclass(new.dtype.type, _nx.bool_):
-            new = new.nonzero()[0]
-        baseshape[k] = len(new)
-        new = new.reshape(tuple(baseshape))
+    for k, new in enumerate(args):
+        new = asarray(new)
+        if new.ndim != 1:
+            raise ValueError("Cross index must be 1 dimensional")
+        if new.size == 0:
+            # Explicitly type empty arrays to avoid float default
+            new = new.astype(_nx.intp)
+        if issubdtype(new.dtype, _nx.bool_):
+            new, = new.nonzero()
+        new = new.reshape((1,)*k + (new.size,) + (1,)*(nd-k-1))
         out.append(new)
-        baseshape[k] = 1
     return tuple(out)
 
 class nd_grid(object):
@@ -139,36 +144,43 @@ class nd_grid(object):
             [4]]), array([[0, 1, 2, 3, 4]])]
 
     """
+
     def __init__(self, sparse=False):
         self.sparse = sparse
-    def __getitem__(self,key):
+
+    def __getitem__(self, key):
         try:
             size = []
             typ = int
             for k in range(len(key)):
                 step = key[k].step
                 start = key[k].start
-                if start is None: start=0
-                if step is None: step=1
+                if start is None:
+                    start = 0
+                if step is None:
+                    step = 1
                 if isinstance(step, complex):
                     size.append(int(abs(step)))
                     typ = float
                 else:
-                    size.append(math.ceil((key[k].stop - start)/(step*1.0)))
-                if isinstance(step, float) or \
-                    isinstance(start, float) or \
-                    isinstance(key[k].stop, float):
+                    size.append(
+                        int(math.ceil((key[k].stop - start)/(step*1.0))))
+                if (isinstance(step, float) or
+                        isinstance(start, float) or
+                        isinstance(key[k].stop, float)):
                     typ = float
             if self.sparse:
-                nn = map(lambda x,t: _nx.arange(x, dtype=t), size, \
-                                     (typ,)*len(size))
+                nn = [_nx.arange(_x, dtype=_t)
+                        for _x, _t in zip(size, (typ,)*len(size))]
             else:
                 nn = _nx.indices(size, typ)
             for k in range(len(size)):
                 step = key[k].step
                 start = key[k].start
-                if start is None: start=0
-                if step is None: step=1
+                if start is None:
+                    start = 0
+                if step is None:
+                    step = 1
                 if isinstance(step, complex):
                     step = int(abs(step))
                     if step != 1:
@@ -177,7 +189,7 @@ class nd_grid(object):
             if self.sparse:
                 slobj = [_nx.newaxis]*len(size)
                 for k in range(len(size)):
-                    slobj[k] = slice(None,None)
+                    slobj[k] = slice(None, None)
                     nn[k] = nn[k][slobj]
                     slobj[k] = _nx.newaxis
             return nn
@@ -185,27 +197,28 @@ class nd_grid(object):
             step = key.step
             stop = key.stop
             start = key.start
-            if start is None: start = 0
+            if start is None:
+                start = 0
             if isinstance(step, complex):
                 step = abs(step)
                 length = int(step)
                 if step != 1:
                     step = (key.stop-start)/float(step-1)
-                stop = key.stop+step
-                return _nx.arange(0, length,1, float)*step + start
+                stop = key.stop + step
+                return _nx.arange(0, length, 1, float)*step + start
             else:
                 return _nx.arange(start, stop, step)
 
-    def __getslice__(self,i,j):
-        return _nx.arange(i,j)
+    def __getslice__(self, i, j):
+        return _nx.arange(i, j)
 
     def __len__(self):
         return 0
 
 mgrid = nd_grid(sparse=False)
 ogrid = nd_grid(sparse=True)
-mgrid.__doc__ = None # set in numpy.add_newdocs
-ogrid.__doc__ = None # set in numpy.add_newdocs
+mgrid.__doc__ = None  # set in numpy.add_newdocs
+ogrid.__doc__ = None  # set in numpy.add_newdocs
 
 class AxisConcatenator(object):
     """
@@ -214,6 +227,7 @@ class AxisConcatenator(object):
     For detailed documentation on usage, see `r_`.
 
     """
+
     def _retval(self, res):
         if self.matrix:
             oldndim = res.ndim
@@ -234,14 +248,14 @@ class AxisConcatenator(object):
         self.trans1d = trans1d
         self.ndmin = ndmin
 
-    def __getitem__(self,key):
+    def __getitem__(self, key):
         trans1d = self.trans1d
         ndmin = self.ndmin
         if isinstance(key, str):
             frame = sys._getframe().f_back
-            mymat = matrix.bmat(key,frame.f_globals,frame.f_locals)
+            mymat = matrix.bmat(key, frame.f_globals, frame.f_locals)
             return mymat
-        if type(key) is not tuple:
+        if not isinstance(key, tuple):
             key = (key,)
         objs = []
         scalars = []
@@ -249,11 +263,12 @@ class AxisConcatenator(object):
         scalartypes = []
         for k in range(len(key)):
             scalar = False
-            if type(key[k]) is slice:
+            if isinstance(key[k], slice):
                 step = key[k].step
                 start = key[k].start
                 stop = key[k].stop
-                if start is None: start = 0
+                if start is None:
+                    start = 0
                 if step is None:
                     step = 1
                 if isinstance(step, complex):
@@ -262,13 +277,13 @@ class AxisConcatenator(object):
                 else:
                     newobj = _nx.arange(start, stop, step)
                 if ndmin > 1:
-                    newobj = array(newobj,copy=False,ndmin=ndmin)
+                    newobj = array(newobj, copy=False, ndmin=ndmin)
                     if trans1d != -1:
-                        newobj = newobj.swapaxes(-1,trans1d)
-            elif isinstance(key[k],str):
+                        newobj = newobj.swapaxes(-1, trans1d)
+            elif isinstance(key[k], str):
                 if k != 0:
-                    raise ValueError, "special directives must be the"\
-                          "first entry."
+                    raise ValueError("special directives must be the "
+                            "first entry.")
                 key0 = key[0]
                 if key0 in 'rc':
                     self.matrix = True
@@ -283,14 +298,14 @@ class AxisConcatenator(object):
                             trans1d = int(vec[2])
                         continue
                     except:
-                        raise ValueError, "unknown special directive"
+                        raise ValueError("unknown special directive")
                 try:
                     self.axis = int(key[k])
                     continue
                 except (ValueError, TypeError):
-                    raise ValueError, "unknown special directive"
+                    raise ValueError("unknown special directive")
             elif type(key[k]) in ScalarType:
-                newobj = array(key[k],ndmin=ndmin)
+                newobj = array(key[k], ndmin=ndmin)
                 scalars.append(k)
                 scalar = True
                 scalartypes.append(newobj.dtype)
@@ -304,7 +319,7 @@ class AxisConcatenator(object):
                         k2 = ndmin-tempobj.ndim
                         if (trans1d < 0):
                             trans1d += k2 + 1
-                        defaxes = range(ndmin)
+                        defaxes = list(range(ndmin))
                         k1 = trans1d
                         axes = defaxes[:k1] + defaxes[k2:] + \
                                defaxes[k1:k2]
@@ -320,11 +335,11 @@ class AxisConcatenator(object):
             for k in scalars:
                 objs[k] = objs[k].astype(final_dtype)
 
-        res = _nx.concatenate(tuple(objs),axis=self.axis)
+        res = _nx.concatenate(tuple(objs), axis=self.axis)
         return self._retval(res)
 
-    def __getslice__(self,i,j):
-        res = _nx.arange(i,j)
+    def __getslice__(self, i, j):
+        res = _nx.arange(i, j)
         return self._retval(res)
 
     def __len__(self):
@@ -389,7 +404,7 @@ class RClass(AxisConcatenator):
 
     See Also
     --------
-    concatenate : Join a sequence of arrays together.
+    concatenate : Join a sequence of arrays along an existing axis.
     c_ : Translates slice objects to concatenation along the second axis.
 
     Examples
@@ -428,6 +443,7 @@ class RClass(AxisConcatenator):
     matrix([[1, 2, 3, 4, 5, 6]])
 
     """
+
     def __init__(self):
         AxisConcatenator.__init__(self, 0)
 
@@ -450,6 +466,7 @@ class CClass(AxisConcatenator):
     array([[1, 2, 3, 0, 0, 4, 5, 6]])
 
     """
+
     def __init__(self):
         AxisConcatenator.__init__(self, -1, ndmin=2, trans1d=0)
 
@@ -463,7 +480,7 @@ class ndenumerate(object):
 
     Parameters
     ----------
-    a : ndarray
+    arr : ndarray
       Input array.
 
     See Also
@@ -481,10 +498,11 @@ class ndenumerate(object):
     (1, 1) 4
 
     """
+
     def __init__(self, arr):
         self.iter = asarray(arr).flat
 
-    def next(self):
+    def __next__(self):
         """
         Standard iterator method, returns the index tuple and array value.
 
@@ -496,10 +514,12 @@ class ndenumerate(object):
             The array element of the current iteration.
 
         """
-        return self.iter.coords, self.iter.next()
+        return self.iter.coords, next(self.iter)
 
     def __iter__(self):
         return self
+
+    next = __next__
 
 
 class ndindex(object):
@@ -532,58 +552,41 @@ class ndindex(object):
 
     """
 
-    def __init__(self, *args):
-        if len(args) == 1 and isinstance(args[0], tuple):
-            args = args[0]
-        self.nd = len(args)
-        self.ind = [0]*self.nd
-        self.index = 0
-        self.maxvals = args
-        tot = 1
-        for k in range(self.nd):
-            tot *= args[k]
-        self.total = tot
+    def __init__(self, *shape):
+        if len(shape) == 1 and isinstance(shape[0], tuple):
+            shape = shape[0]
+        x = as_strided(_nx.zeros(1), shape=shape,
+                       strides=_nx.zeros_like(shape))
+        self._it = _nx.nditer(x, flags=['multi_index', 'zerosize_ok'],
+                              order='C')
 
-    def _incrementone(self, axis):
-        if (axis < 0):  # base case
-            return
-        if (self.ind[axis] < self.maxvals[axis]-1):
-            self.ind[axis] += 1
-        else:
-            self.ind[axis] = 0
-            self._incrementone(axis-1)
+    def __iter__(self):
+        return self
 
     def ndincr(self):
         """
         Increment the multi-dimensional index by one.
 
-        `ndincr` takes care of the "wrapping around" of the axes.
-        It is called by `ndindex.next` and not normally used directly.
-
+        This method is for backward compatibility only: do not use.
         """
-        self._incrementone(self.nd-1)
+        next(self)
 
-    def next(self):
+    def __next__(self):
         """
-        Standard iterator method, updates the index and returns the index tuple.
+        Standard iterator method, updates the index and returns the index
+        tuple.
 
         Returns
         -------
         val : tuple of ints
-            Returns a tuple containing the indices of the current iteration.
+            Returns a tuple containing the indices of the current
+            iteration.
 
         """
-        if (self.index >= self.total):
-            raise StopIteration
-        val = tuple(self.ind)
-        self.index += 1
-        self.ndincr()
-        return val
+        next(self._it)
+        return self._it.multi_index
 
-    def __iter__(self):
-        return self
-
-
+    next = __next__
 
 
 # You can do all this with slice() plus a few special objects,
@@ -640,11 +643,12 @@ class IndexExpression(object):
     array([2, 4])
 
     """
+
     def __init__(self, maketuple):
         self.maketuple = maketuple
 
     def __getitem__(self, item):
-        if self.maketuple and type(item) != tuple:
+        if self.maketuple and not isinstance(item, tuple):
             return (item,)
         else:
             return item
@@ -658,9 +662,8 @@ s_ = IndexExpression(maketuple=False)
 # The following functions complement those in twodim_base, but are
 # applicable to N-dimensions.
 
-def fill_diagonal(a, val):
-    """
-    Fill the main diagonal of the given array of any dimensionality.
+def fill_diagonal(a, val, wrap=False):
+    """Fill the main diagonal of the given array of any dimensionality.
 
     For an array `a` with ``a.ndim > 2``, the diagonal is the list of
     locations with indices ``a[i, i, ..., i]`` all identical. This function
@@ -674,6 +677,11 @@ def fill_diagonal(a, val):
     val : scalar
       Value to be written on the diagonal, its type must be compatible with
       that of the array a.
+
+    wrap : bool
+      For tall matrices in NumPy version up to 1.6.2, the
+      diagonal "wrapped" after N columns. You can have this behavior
+      with this option. This affect only tall matrices.
 
     See also
     --------
@@ -716,22 +724,56 @@ def fill_diagonal(a, val):
            [0, 0, 0],
            [0, 0, 4]])
 
+    The wrap option affects only tall matrices:
+
+    >>> # tall matrices no wrap
+    >>> a = np.zeros((5, 3),int)
+    >>> fill_diagonal(a, 4)
+    >>> a
+    array([[4, 0, 0],
+           [0, 4, 0],
+           [0, 0, 4],
+           [0, 0, 0],
+           [0, 0, 0]])
+
+    >>> # tall matrices wrap
+    >>> a = np.zeros((5, 3),int)
+    >>> fill_diagonal(a, 4, wrap=True)
+    >>> a
+    array([[4, 0, 0],
+           [0, 4, 0],
+           [0, 0, 4],
+           [0, 0, 0],
+           [4, 0, 0]])
+
+    >>> # wide matrices
+    >>> a = np.zeros((3, 5),int)
+    >>> fill_diagonal(a, 4, wrap=True)
+    >>> a
+    array([[4, 0, 0, 0, 0],
+           [0, 4, 0, 0, 0],
+           [0, 0, 4, 0, 0]])
+
     """
     if a.ndim < 2:
         raise ValueError("array must be at least 2-d")
+    end = None
     if a.ndim == 2:
         # Explicit, fast formula for the common case.  For 2-d arrays, we
         # accept rectangular ones.
         step = a.shape[1] + 1
+        #This is needed to don't have tall matrix have the diagonal wrap.
+        if not wrap:
+            end = a.shape[1] * a.shape[1]
     else:
         # For more than d=2, the strided formula is only valid for arrays with
         # all dimensions equal, so we check first.
-        if not alltrue(diff(a.shape)==0):
+        if not alltrue(diff(a.shape) == 0):
             raise ValueError("All dimensions of input must be of equal length")
         step = 1 + (cumprod(a.shape[:-1])).sum()
 
     # Write the value out into the diagonal.
-    a.flat[::step] = val
+    a.flat[:end:step] = val
 
 
 def diag_indices(n, ndim=2):

@@ -1,7 +1,10 @@
-__all__ = ['atleast_1d','atleast_2d','atleast_3d','vstack','hstack']
+from __future__ import division, absolute_import, print_function
 
-import numeric as _nx
-from numeric import array, asanyarray, newaxis
+__all__ = ['atleast_1d', 'atleast_2d', 'atleast_3d', 'vstack', 'hstack',
+           'stack']
+
+from . import numeric as _nx
+from .numeric import asanyarray, newaxis
 
 def atleast_1d(*arys):
     """
@@ -12,7 +15,7 @@ def atleast_1d(*arys):
 
     Parameters
     ----------
-    array1, array2, ... : array_like
+    arys1, arys2, ... : array_like
         One or more input arrays.
 
     Returns
@@ -45,9 +48,9 @@ def atleast_1d(*arys):
     res = []
     for ary in arys:
         ary = asanyarray(ary)
-        if len(ary.shape) == 0 :
+        if len(ary.shape) == 0:
             result = ary.reshape(1)
-        else :
+        else:
             result = ary
         res.append(result)
     if len(res) == 1:
@@ -61,7 +64,7 @@ def atleast_2d(*arys):
 
     Parameters
     ----------
-    array1, array2, ... : array_like
+    arys1, arys2, ... : array_like
         One or more array-like sequences.  Non-array inputs are converted
         to arrays.  Arrays that already have two or more dimensions are
         preserved.
@@ -95,11 +98,11 @@ def atleast_2d(*arys):
     res = []
     for ary in arys:
         ary = asanyarray(ary)
-        if len(ary.shape) == 0 :
+        if len(ary.shape) == 0:
             result = ary.reshape(1, 1)
-        elif len(ary.shape) == 1 :
-            result = ary[newaxis, :]
-        else :
+        elif len(ary.shape) == 1:
+            result = ary[newaxis,:]
+        else:
             result = ary
         res.append(result)
     if len(res) == 1:
@@ -113,7 +116,7 @@ def atleast_3d(*arys):
 
     Parameters
     ----------
-    array1, array2, ... : array_like
+    arys1, arys2, ... : array_like
         One or more array-like sequences.  Non-array inputs are converted to
         arrays.  Arrays that already have three or more dimensions are
         preserved.
@@ -160,11 +163,11 @@ def atleast_3d(*arys):
     for ary in arys:
         ary = asanyarray(ary)
         if len(ary.shape) == 0:
-            result = ary.reshape(1,1,1)
+            result = ary.reshape(1, 1, 1)
         elif len(ary.shape) == 1:
-            result = ary[newaxis,:,newaxis]
+            result = ary[newaxis,:, newaxis]
         elif len(ary.shape) == 2:
-            result = ary[:,:,newaxis]
+            result = ary[:,:, newaxis]
         else:
             result = ary
         res.append(result)
@@ -194,9 +197,10 @@ def vstack(tup):
 
     See Also
     --------
+    stack : Join a sequence of arrays along a new axis.
     hstack : Stack arrays in sequence horizontally (column wise).
     dstack : Stack arrays in sequence depth wise (along third dimension).
-    concatenate : Join a sequence of arrays together.
+    concatenate : Join a sequence of arrays along an existing axis.
     vsplit : Split array into a list of multiple sub-arrays vertically.
 
     Notes
@@ -223,7 +227,7 @@ def vstack(tup):
            [4]])
 
     """
-    return _nx.concatenate(map(atleast_2d,tup),0)
+    return _nx.concatenate([atleast_2d(_m) for _m in tup], 0)
 
 def hstack(tup):
     """
@@ -244,9 +248,10 @@ def hstack(tup):
 
     See Also
     --------
+    stack : Join a sequence of arrays along a new axis.
     vstack : Stack arrays in sequence vertically (row wise).
     dstack : Stack arrays in sequence depth wise (along third axis).
-    concatenate : Join a sequence of arrays together.
+    concatenate : Join a sequence of arrays along an existing axis.
     hsplit : Split array along second axis.
 
     Notes
@@ -267,5 +272,79 @@ def hstack(tup):
            [3, 4]])
 
     """
-    return _nx.concatenate(map(atleast_1d,tup),1)
+    arrs = [atleast_1d(_m) for _m in tup]
+    # As a special case, dimension 0 of 1-dimensional arrays is "horizontal"
+    if arrs[0].ndim == 1:
+        return _nx.concatenate(arrs, 0)
+    else:
+        return _nx.concatenate(arrs, 1)
 
+def stack(arrays, axis=0):
+    """
+    Join a sequence of arrays along a new axis.
+
+    The `axis` parameter specifies the index of the new axis in the dimensions
+    of the result. For example, if ``axis=0`` it will be the first dimension
+    and if ``axis=-1`` it will be the last dimension.
+
+    .. versionadded:: 1.10.0
+
+    Parameters
+    ----------
+    arrays : sequence of array_like
+        Each array must have the same shape.
+    axis : int, optional
+        The axis in the result array along which the input arrays are stacked.
+
+    Returns
+    -------
+    stacked : ndarray
+        The stacked array has one more dimension than the input arrays.
+
+    See Also
+    --------
+    concatenate : Join a sequence of arrays along an existing axis.
+    split : Split array into a list of multiple sub-arrays of equal size.
+
+    Examples
+    --------
+    >>> arrays = [np.random.randn(3, 4) for _ in range(10)]
+    >>> np.stack(arrays, axis=0).shape
+    (10, 3, 4)
+
+    >>> np.stack(arrays, axis=1).shape
+    (3, 10, 4)
+
+    >>> np.stack(arrays, axis=2).shape
+    (3, 4, 10)
+
+    >>> a = np.array([1, 2, 3])
+    >>> b = np.array([2, 3, 4])
+    >>> np.stack((a, b))
+    array([[1, 2, 3],
+           [2, 3, 4]])
+
+    >>> np.stack((a, b), axis=-1)
+    array([[1, 2],
+           [2, 3],
+           [3, 4]])
+
+    """
+    arrays = [asanyarray(arr) for arr in arrays]
+    if not arrays:
+        raise ValueError('need at least one array to stack')
+
+    shapes = set(arr.shape for arr in arrays)
+    if len(shapes) != 1:
+        raise ValueError('all input arrays must have the same shape')
+
+    result_ndim = arrays[0].ndim + 1
+    if not -result_ndim <= axis < result_ndim:
+        msg = 'axis {0} out of bounds [-{1}, {1})'.format(axis, result_ndim)
+        raise IndexError(msg)
+    if axis < 0:
+        axis += result_ndim
+
+    sl = (slice(None),) * axis + (_nx.newaxis,)
+    expanded_arrays = [arr[sl] for arr in arrays]
+    return _nx.concatenate(expanded_arrays, axis=axis)

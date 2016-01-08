@@ -1,15 +1,22 @@
+from __future__ import division, absolute_import, print_function
+
 import os
 import sys
 import types
 import re
+import warnings
 
 from numpy.core.numerictypes import issubclass_, issubsctype, issubdtype
-from numpy.core import product, ndarray, ufunc
+from numpy.core import ndarray, ufunc, asarray
 
-__all__ = ['issubclass_', 'issubsctype', 'issubdtype',
-        'deprecate', 'deprecate_with_doc', 'get_numarray_include',
-        'get_include', 'info', 'source', 'who', 'lookfor', 'byte_bounds',
-        'may_share_memory', 'safe_eval']
+# getargspec and formatargspec were removed in Python 3.6
+from numpy.compat import getargspec, formatargspec
+
+__all__ = [
+    'issubclass_', 'issubsctype', 'issubdtype', 'deprecate',
+    'deprecate_with_doc', 'get_include', 'info', 'source', 'who',
+    'lookfor', 'byte_bounds', 'safe_eval'
+    ]
 
 def get_include():
     """
@@ -40,59 +47,11 @@ def get_include():
         d = os.path.join(os.path.dirname(core.__file__), 'include')
     return d
 
-def get_numarray_include(type=None):
-    """
-    Return the directory that contains the numarray \\*.h header files.
 
-    Extension modules that need to compile against numarray should use this
-    function to locate the appropriate include directory.
+def _set_function_name(func, name):
+    func.__name__ = name
+    return func
 
-    Parameters
-    ----------
-    type : any, optional
-        If `type` is not None, the location of the NumPy headers is returned
-        as well.
-
-    Returns
-    -------
-    dirs : str or list of str
-        If `type` is None, `dirs` is a string containing the path to the
-        numarray headers.
-        If `type` is not None, `dirs` is a list of strings with first the
-        path(s) to the numarray headers, followed by the path to the NumPy
-        headers.
-
-    Notes
-    -----
-    Useful when using ``distutils``, for example in ``setup.py``.
-    ::
-
-        import numpy as np
-        ...
-        Extension('extension_name', ...
-                include_dirs=[np.get_numarray_include()])
-        ...
-
-    """
-    from numpy.numarray import get_numarray_include_dirs
-    include_dirs = get_numarray_include_dirs()
-    if type is None:
-        return include_dirs[0]
-    else:
-        return include_dirs + [get_include()]
-
-
-if sys.version_info < (2, 4):
-    # Can't set __name__ in 2.3
-    import new
-    def _set_function_name(func, name):
-        func = new.function(func.func_code, func.func_globals,
-                            name, func.func_defaults, func.func_closure)
-        return func
-else:
-    def _set_function_name(func, name):
-        func.__name__ = name
-        return func
 
 class _Deprecate(object):
     """
@@ -105,6 +64,7 @@ class _Deprecate(object):
     deprecate
 
     """
+
     def __init__(self, old_name=None, new_name=None, message=None):
         self.old_name = old_name
         self.new_name = new_name
@@ -122,7 +82,7 @@ class _Deprecate(object):
         import warnings
         if old_name is None:
             try:
-                old_name = func.func_name
+                old_name = func.__name__
             except AttributeError:
                 old_name = func.__name__
         if new_name is None:
@@ -167,16 +127,16 @@ def deprecate(*args, **kwargs):
     func : function
         The function to be deprecated.
     old_name : str, optional
-        The name of the function to be deprecated. Default is None, in which
-        case the name of `func` is used.
+        The name of the function to be deprecated. Default is None, in
+        which case the name of `func` is used.
     new_name : str, optional
-        The new name for the function. Default is None, in which case
-        the deprecation message is that `old_name` is deprecated. If given,
-        the deprecation message is that `old_name` is deprecated and `new_name`
+        The new name for the function. Default is None, in which case the
+        deprecation message is that `old_name` is deprecated. If given, the
+        deprecation message is that `old_name` is deprecated and `new_name`
         should be used instead.
     message : str, optional
-        Additional explanation of the deprecation.  Displayed in the docstring
-        after the warning.
+        Additional explanation of the deprecation.  Displayed in the
+        docstring after the warning.
 
     Returns
     -------
@@ -185,7 +145,8 @@ def deprecate(*args, **kwargs):
 
     Examples
     --------
-    Note that ``olduint`` returns a value after printing Deprecation Warning:
+    Note that ``olduint`` returns a value after printing Deprecation
+    Warning:
 
     >>> olduint = np.deprecate(np.uint)
     >>> olduint(6)
@@ -228,14 +189,16 @@ def byte_bounds(a):
     Parameters
     ----------
     a : ndarray
-        Input array. It must conform to the Python-side of the array interface.
+        Input array. It must conform to the Python-side of the array
+        interface.
 
     Returns
     -------
     (low, high) : tuple of 2 integers
-        The first integer is the first byte of the array, the second integer is
-        just past the last byte of the array.  If `a` is not contiguous it
-        will not use every byte between the (`low`, `high`) values.
+        The first integer is the first byte of the array, the second
+        integer is just past the last byte of the array.  If `a` is not
+        contiguous it will not use every byte between the (`low`, `high`)
+        values.
 
     Examples
     --------
@@ -255,12 +218,12 @@ def byte_bounds(a):
     a_data = ai['data'][0]
     astrides = ai['strides']
     ashape = ai['shape']
-    nd_a = len(ashape)
-    bytes_a = int(ai['typestr'][2:])
+    bytes_a = asarray(a).dtype.itemsize
 
     a_low = a_high = a_data
-    if astrides is None: # contiguous case
-        a_high += product(ashape, dtype=int)*bytes_a
+    if astrides is None:
+        # contiguous case
+        a_high += a.size * bytes_a
     else:
         for shape, stride in zip(ashape, astrides):
             if stride < 0:
@@ -270,36 +233,6 @@ def byte_bounds(a):
         a_high += bytes_a
     return a_low, a_high
 
-
-def may_share_memory(a, b):
-    """
-    Determine if two arrays can share memory
-
-    The memory-bounds of a and b are computed.  If they overlap then
-    this function returns True.  Otherwise, it returns False.
-
-    A return of True does not necessarily mean that the two arrays
-    share any element.  It just means that they *might*.
-
-    Parameters
-    ----------
-    a, b : ndarray
-
-    Returns
-    -------
-    out : bool
-
-    Examples
-    --------
-    >>> np.may_share_memory(np.array([1,2]), np.array([5,8,9]))
-    False
-
-    """
-    a_low, a_high = byte_bounds(a)
-    b_low, b_high = byte_bounds(b)
-    if b_low >= a_high or a_low >= b_high:
-        return False
-    return True
 
 #-----------------------------------------------------------------------------
 # Function for output and information on the variables used.
@@ -326,8 +259,8 @@ def who(vardict=None):
 
     Notes
     -----
-    Prints out the name, shape, bytes and type of all of the ndarrays present
-    in `vardict`.
+    Prints out the name, shape, bytes and type of all of the ndarrays
+    present in `vardict`.
 
     Examples
     --------
@@ -356,16 +289,16 @@ def who(vardict=None):
     sta = []
     cache = {}
     for name in vardict.keys():
-        if isinstance(vardict[name],ndarray):
+        if isinstance(vardict[name], ndarray):
             var = vardict[name]
             idv = id(var)
             if idv in cache.keys():
                 namestr = name + " (%s)" % cache[idv]
-                original=0
+                original = 0
             else:
                 cache[idv] = name
                 namestr = name
-                original=1
+                original = 1
             shapestr = " x ".join(map(str, var.shape))
             bytestr = str(var.nbytes)
             sta.append([namestr, shapestr, bytestr, var.dtype.name,
@@ -387,19 +320,19 @@ def who(vardict=None):
             totalbytes += int(val[2])
 
     if len(sta) > 0:
-        sp1 = max(10,maxname)
-        sp2 = max(10,maxshape)
-        sp3 = max(10,maxbyte)
+        sp1 = max(10, maxname)
+        sp2 = max(10, maxshape)
+        sp3 = max(10, maxbyte)
         prval = "Name %s Shape %s Bytes %s Type" % (sp1*' ', sp2*' ', sp3*' ')
-        print prval + "\n" + "="*(len(prval)+5) + "\n"
+        print(prval + "\n" + "="*(len(prval)+5) + "\n")
 
     for k in range(len(sta)):
         val = sta[k]
-        print "%s %s %s %s %s %s %s" % (val[0], ' '*(sp1-len(val[0])+4),
+        print("%s %s %s %s %s %s %s" % (val[0], ' '*(sp1-len(val[0])+4),
                                         val[1], ' '*(sp2-len(val[1])+5),
                                         val[2], ' '*(sp3-len(val[2])+5),
-                                        val[3])
-    print "\nUpper bound on total bytes  =       %d" % totalbytes
+                                        val[3]))
+    print("\nUpper bound on total bytes  =       %d" % totalbytes)
     return
 
 #-----------------------------------------------------------------------------
@@ -408,9 +341,9 @@ def who(vardict=None):
 # NOTE:  pydoc defines a help function which works simliarly to this
 #  except it uses a pager to take over the screen.
 
-# combine name and arguments and split to multiple lines of
-#  width characters.  End lines on a comma and begin argument list
-#  indented with the rest of the arguments.
+# combine name and arguments and split to multiple lines of width
+# characters.  End lines on a comma and begin argument list indented with
+# the rest of the arguments.
 def _split_line(name, arguments, width):
     firstwidth = len(name)
     k = firstwidth
@@ -440,12 +373,12 @@ def _makenamedict(module='numpy'):
     thedict = {module.__name__:module.__dict__}
     dictlist = [module.__name__]
     totraverse = [module.__dict__]
-    while 1:
+    while True:
         if len(totraverse) == 0:
             break
         thisdict = totraverse.pop(0)
         for x in thisdict.keys():
-            if isinstance(thisdict[x],types.ModuleType):
+            if isinstance(thisdict[x], types.ModuleType):
                 modname = thisdict[x].__name__
                 if modname not in dictlist:
                     moddict = thisdict[x].__dict__
@@ -454,7 +387,59 @@ def _makenamedict(module='numpy'):
                     thedict[modname] = moddict
     return thedict, dictlist
 
-def info(object=None,maxwidth=76,output=sys.stdout,toplevel='numpy'):
+
+def _info(obj, output=sys.stdout):
+    """Provide information about ndarray obj.
+
+    Parameters
+    ----------
+    obj: ndarray
+        Must be ndarray, not checked.
+    output:
+        Where printed output goes.
+
+    Notes
+    -----
+    Copied over from the numarray module prior to its removal.
+    Adapted somewhat as only numpy is an option now.
+
+    Called by info.
+
+    """
+    extra = ""
+    tic = ""
+    bp = lambda x: x
+    cls = getattr(obj, '__class__', type(obj))
+    nm = getattr(cls, '__name__', cls)
+    strides = obj.strides
+    endian = obj.dtype.byteorder
+
+    print("class: ", nm, file=output)
+    print("shape: ", obj.shape, file=output)
+    print("strides: ", strides, file=output)
+    print("itemsize: ", obj.itemsize, file=output)
+    print("aligned: ", bp(obj.flags.aligned), file=output)
+    print("contiguous: ", bp(obj.flags.contiguous), file=output)
+    print("fortran: ", obj.flags.fortran, file=output)
+    print(
+        "data pointer: %s%s" % (hex(obj.ctypes._as_parameter_.value), extra),
+        file=output
+        )
+    print("byteorder: ", end=' ', file=output)
+    if endian in ['|', '=']:
+        print("%s%s%s" % (tic, sys.byteorder, tic), file=output)
+        byteswap = False
+    elif endian == '>':
+        print("%sbig%s" % (tic, tic), file=output)
+        byteswap = sys.byteorder != "big"
+    else:
+        print("%slittle%s" % (tic, tic), file=output)
+        byteswap = sys.byteorder != "little"
+    print("byteswap: ", bp(byteswap), file=output)
+    print("type: %s" % obj.dtype, file=output)
+
+
+def info(object=None, maxwidth=76, output=sys.stdout, toplevel='numpy'):
     """
     Get help information for a function, class, or module.
 
@@ -463,13 +448,13 @@ def info(object=None,maxwidth=76,output=sys.stdout,toplevel='numpy'):
     object : object or str, optional
         Input object or name to get information about. If `object` is a
         numpy object, its docstring is given. If it is a string, available
-        modules are searched for matching objects.
-        If None, information about `info` itself is returned.
+        modules are searched for matching objects.  If None, information
+        about `info` itself is returned.
     maxwidth : int, optional
         Printing width.
     output : file like object, optional
-        File like object that the output is written to, default is ``stdout``.
-        The object has to be opened in 'w' or 'a' mode.
+        File like object that the output is written to, default is
+        ``stdout``.  The object has to be opened in 'w' or 'a' mode.
     toplevel : str, optional
         Start search at this level.
 
@@ -479,8 +464,9 @@ def info(object=None,maxwidth=76,output=sys.stdout,toplevel='numpy'):
 
     Notes
     -----
-    When used interactively with an object, ``np.info(obj)`` is equivalent to
-    ``help(obj)`` on the Python prompt or ``obj?`` on the IPython prompt.
+    When used interactively with an object, ``np.info(obj)`` is equivalent
+    to ``help(obj)`` on the Python prompt or ``obj?`` on the IPython
+    prompt.
 
     Examples
     --------
@@ -504,10 +490,11 @@ def info(object=None,maxwidth=76,output=sys.stdout,toplevel='numpy'):
     """
     global _namedict, _dictlist
     # Local import to speed up numpy's import time.
-    import pydoc, inspect
+    import pydoc
+    import inspect
 
-    if hasattr(object,'_ppimport_importer') or \
-       hasattr(object, '_ppimport_module'):
+    if (hasattr(object, '_ppimport_importer') or
+           hasattr(object, '_ppimport_module')):
         object = object._ppimport_module
     elif hasattr(object, '_ppimport_attr'):
         object = object._ppimport_attr
@@ -515,8 +502,7 @@ def info(object=None,maxwidth=76,output=sys.stdout,toplevel='numpy'):
     if object is None:
         info(info)
     elif isinstance(object, ndarray):
-        import numpy.numarray as nn
-        nn.info(object, output=output, numpy=1)
+        _info(object, output=output)
     elif isinstance(object, str):
         if _namedict is None:
             _namedict, _dictlist = _makenamedict(toplevel)
@@ -526,38 +512,46 @@ def info(object=None,maxwidth=76,output=sys.stdout,toplevel='numpy'):
             try:
                 obj = _namedict[namestr][object]
                 if id(obj) in objlist:
-                    print >> output, "\n     *** Repeat reference found in %s *** " % namestr
+                    print("\n     "
+                          "*** Repeat reference found in %s *** " % namestr,
+                          file=output
+                          )
                 else:
                     objlist.append(id(obj))
-                    print >> output, "     *** Found in %s ***" % namestr
+                    print("     *** Found in %s ***" % namestr, file=output)
                     info(obj)
-                    print >> output, "-"*maxwidth
+                    print("-"*maxwidth, file=output)
                 numfound += 1
             except KeyError:
                 pass
         if numfound == 0:
-            print >> output, "Help for %s not found." % object
+            print("Help for %s not found." % object, file=output)
         else:
-            print >> output, "\n     *** Total of %d references found. ***" % numfound
+            print("\n     "
+                  "*** Total of %d references found. ***" % numfound,
+                  file=output
+                  )
 
     elif inspect.isfunction(object):
-        name = object.func_name
-        arguments = inspect.formatargspec(*inspect.getargspec(object))
+        name = object.__name__
+        arguments = formatargspec(*getargspec(object))
 
         if len(name+arguments) > maxwidth:
             argstr = _split_line(name, arguments, maxwidth)
         else:
             argstr = name + arguments
 
-        print >> output, " " + argstr + "\n"
-        print >> output, inspect.getdoc(object)
+        print(" " + argstr + "\n", file=output)
+        print(inspect.getdoc(object), file=output)
 
     elif inspect.isclass(object):
         name = object.__name__
         arguments = "()"
         try:
             if hasattr(object, '__init__'):
-                arguments = inspect.formatargspec(*inspect.getargspec(object.__init__.im_func))
+                arguments = formatargspec(
+                        *getargspec(object.__init__.__func__)
+                        )
                 arglist = arguments.split(', ')
                 if len(arglist) > 1:
                     arglist[1] = "("+arglist[1]
@@ -570,30 +564,37 @@ def info(object=None,maxwidth=76,output=sys.stdout,toplevel='numpy'):
         else:
             argstr = name + arguments
 
-        print >> output, " " + argstr + "\n"
+        print(" " + argstr + "\n", file=output)
         doc1 = inspect.getdoc(object)
         if doc1 is None:
-            if hasattr(object,'__init__'):
-                print >> output, inspect.getdoc(object.__init__)
+            if hasattr(object, '__init__'):
+                print(inspect.getdoc(object.__init__), file=output)
         else:
-            print >> output, inspect.getdoc(object)
+            print(inspect.getdoc(object), file=output)
 
         methods = pydoc.allmethods(object)
         if methods != []:
-            print >> output, "\n\nMethods:\n"
+            print("\n\nMethods:\n", file=output)
             for meth in methods:
                 if meth[0] == '_':
                     continue
                 thisobj = getattr(object, meth, None)
                 if thisobj is not None:
-                    methstr, other = pydoc.splitdoc(inspect.getdoc(thisobj) or "None")
-                print >> output, "  %s  --  %s" % (meth, methstr)
+                    methstr, other = pydoc.splitdoc(
+                            inspect.getdoc(thisobj) or "None"
+                            )
+                print("  %s  --  %s" % (meth, methstr), file=output)
 
-    elif type(object) is types.InstanceType: ## check for __call__ method
-        print >> output, "Instance of class: ", object.__class__.__name__
-        print >> output
+    elif (sys.version_info[0] < 3
+            and isinstance(object, types.InstanceType)):
+        # check for __call__ method
+        # types.InstanceType is the type of the instances of oldstyle classes
+        print("Instance of class: ", object.__class__.__name__, file=output)
+        print(file=output)
         if hasattr(object, '__call__'):
-            arguments = inspect.formatargspec(*inspect.getargspec(object.__call__.im_func))
+            arguments = formatargspec(
+                    *getargspec(object.__call__.__func__)
+                    )
             arglist = arguments.split(', ')
             if len(arglist) > 1:
                 arglist[1] = "("+arglist[1]
@@ -601,7 +602,7 @@ def info(object=None,maxwidth=76,output=sys.stdout,toplevel='numpy'):
             else:
                 arguments = "()"
 
-            if hasattr(object,'name'):
+            if hasattr(object, 'name'):
                 name = "%s" % object.name
             else:
                 name = "<name>"
@@ -610,18 +611,20 @@ def info(object=None,maxwidth=76,output=sys.stdout,toplevel='numpy'):
             else:
                 argstr = name + arguments
 
-            print >> output, " " + argstr + "\n"
+            print(" " + argstr + "\n", file=output)
             doc = inspect.getdoc(object.__call__)
             if doc is not None:
-                print >> output, inspect.getdoc(object.__call__)
-            print >> output, inspect.getdoc(object)
+                print(inspect.getdoc(object.__call__), file=output)
+            print(inspect.getdoc(object), file=output)
 
         else:
-            print >> output, inspect.getdoc(object)
+            print(inspect.getdoc(object), file=output)
 
     elif inspect.ismethod(object):
         name = object.__name__
-        arguments = inspect.formatargspec(*inspect.getargspec(object.im_func))
+        arguments = formatargspec(
+                *getargspec(object.__func__)
+                )
         arglist = arguments.split(', ')
         if len(arglist) > 1:
             arglist[1] = "("+arglist[1]
@@ -634,11 +637,11 @@ def info(object=None,maxwidth=76,output=sys.stdout,toplevel='numpy'):
         else:
             argstr = name + arguments
 
-        print >> output, " " + argstr + "\n"
-        print >> output, inspect.getdoc(object)
+        print(" " + argstr + "\n", file=output)
+        print(inspect.getdoc(object), file=output)
 
     elif hasattr(object, '__doc__'):
-        print >> output, inspect.getdoc(object)
+        print(inspect.getdoc(object), file=output)
 
 
 def source(object, output=sys.stdout):
@@ -652,7 +655,8 @@ def source(object, output=sys.stdout):
     Parameters
     ----------
     object : numpy object
-        Input object. This can be any object (function, class, module, ...).
+        Input object. This can be any object (function, class, module,
+        ...).
     output : file object, optional
         If `output` not supplied then source code is printed to screen
         (sys.stdout).  File object must be created with either write 'w' or
@@ -682,10 +686,10 @@ def source(object, output=sys.stdout):
     # Local import to speed up numpy's import time.
     import inspect
     try:
-        print >> output,  "In file: %s\n" % inspect.getsourcefile(object)
-        print >> output,  inspect.getsource(object)
+        print("In file: %s\n" % inspect.getsourcefile(object), file=output)
+        print(inspect.getsource(object), file=output)
     except:
-        print >> output,  "Not available for this object."
+        print("Not available for this object.", file=output)
 
 
 # Cache for lookfor: {id(module): {name: (docstring, kind, index), ...}...}
@@ -693,7 +697,8 @@ def source(object, output=sys.stdout):
 # and index: index in breadth-first namespace traversal
 _lookfor_caches = {}
 
-# regexp whose match indicates that the string may contain a function signature
+# regexp whose match indicates that the string may contain a function
+# signature
 _function_signature_re = re.compile(r"[a-z0-9_]+\(.*[,=].*\)", re.I)
 
 def lookfor(what, module=None, import_modules=True, regenerate=False,
@@ -751,9 +756,10 @@ def lookfor(what, module=None, import_modules=True, regenerate=False,
     # XXX: maybe using a real stemming search engine would be better?
     found = []
     whats = str(what).lower().split()
-    if not whats: return
+    if not whats:
+        return
 
-    for name, (docstring, kind, index) in cache.iteritems():
+    for name, (docstring, kind, index) in cache.items():
         if kind in ('module', 'object'):
             # don't show modules or objects
             continue
@@ -821,7 +827,7 @@ def lookfor(what, module=None, import_modules=True, regenerate=False,
         pager = pydoc.getpager()
         pager("\n".join(help_text))
     else:
-        print "\n".join(help_text)
+        print("\n".join(help_text))
 
 def _lookfor_generate_cache(module, import_modules, regenerate):
     """
@@ -833,7 +839,7 @@ def _lookfor_generate_cache(module, import_modules, regenerate):
         Module for which to generate docstring cache
     import_modules : bool
         Whether to import sub-modules in packages.
-    regenerate: bool
+    regenerate : bool
         Re-generate the docstring cache
 
     Returns
@@ -846,7 +852,12 @@ def _lookfor_generate_cache(module, import_modules, regenerate):
     global _lookfor_caches
     # Local import to speed up numpy's import time.
     import inspect
-    from cStringIO import StringIO
+
+    if sys.version_info[0] >= 3:
+        # In Python3 stderr, stdout are text files.
+        from io import StringIO
+    else:
+        from StringIO import StringIO
 
     if module is None:
         module = "numpy"
@@ -875,7 +886,8 @@ def _lookfor_generate_cache(module, import_modules, regenerate):
     stack = [(module.__name__, module)]
     while stack:
         name, item = stack.pop(0)
-        if id(item) in seen: continue
+        if id(item) in seen:
+            continue
         seen[id(item)] = True
 
         index += 1
@@ -894,7 +906,8 @@ def _lookfor_generate_cache(module, import_modules, regenerate):
                     for mod_path in os.listdir(pth):
                         this_py = os.path.join(pth, mod_path)
                         init_py = os.path.join(pth, mod_path, '__init__.py')
-                        if os.path.isfile(this_py) and mod_path.endswith('.py'):
+                        if (os.path.isfile(this_py) and
+                                mod_path.endswith('.py')):
                             to_import = mod_path[:-3]
                         elif os.path.isfile(init_py):
                             to_import = mod_path
@@ -924,8 +937,14 @@ def _lookfor_generate_cache(module, import_modules, regenerate):
                             continue
 
             for n, v in _getmembers(item):
-                item_name = getattr(v, '__name__', "%s.%s" % (name, n))
-                mod_name = getattr(v, '__module__', None)
+                try:
+                    item_name = getattr(v, '__name__', "%s.%s" % (name, n))
+                    mod_name = getattr(v, '__module__', None)
+                except NameError:
+                    # ref. SWIG's global cvars
+                    #    NameError: Unknown C global variable
+                    item_name = "%s.%s" % (name, n)
+                    mod_name = None
                 if '.' not in item_name and mod_name:
                     item_name = "%s.%s" % (mod_name, item_name)
 
@@ -946,7 +965,11 @@ def _lookfor_generate_cache(module, import_modules, regenerate):
         elif hasattr(item, "__call__"):
             kind = "func"
 
-        doc = inspect.getdoc(item)
+        try:
+            doc = inspect.getdoc(item)
+        except NameError:
+            # ref SWIG's NameError: Unknown C global variable
+            doc = None
         if doc is not None:
             cache[name] = (doc, kind, index)
 
@@ -956,7 +979,7 @@ def _getmembers(item):
     import inspect
     try:
         members = inspect.getmembers(item)
-    except AttributeError:
+    except Exception:
         members = [(x, getattr(item, x)) for x in dir(item)
                    if hasattr(item, x)]
     return members
@@ -983,106 +1006,71 @@ class SafeEval(object):
     This includes strings with lists, dicts and tuples using the abstract
     syntax tree created by ``compiler.parse``.
 
-    For an example of usage, see `safe_eval`.
+    .. deprecated:: 1.10.0
 
     See Also
     --------
     safe_eval
 
     """
+    def __init__(self):
+        # 2014-10-15, 1.10
+        warnings.warn("SafeEval is deprecated in 1.10 and will be removed.",
+                      DeprecationWarning)
 
-    if sys.version_info[0] < 3:
-        def visit(self, node, **kw):
-            cls = node.__class__
-            meth = getattr(self,'visit'+cls.__name__,self.default)
-            return meth(node, **kw)
+    def visit(self, node):
+        cls = node.__class__
+        meth = getattr(self, 'visit' + cls.__name__, self.default)
+        return meth(node)
 
-        def default(self, node, **kw):
-            raise SyntaxError("Unsupported source construct: %s"
-                              % node.__class__)
+    def default(self, node):
+        raise SyntaxError("Unsupported source construct: %s"
+                          % node.__class__)
 
-        def visitExpression(self, node, **kw):
-            for child in node.getChildNodes():
-                return self.visit(child, **kw)
+    def visitExpression(self, node):
+        return self.visit(node.body)
 
-        def visitConst(self, node, **kw):
-            return node.value
+    def visitNum(self, node):
+        return node.n
 
-        def visitDict(self, node,**kw):
-            return dict([(self.visit(k),self.visit(v)) for k,v in node.items])
+    def visitStr(self, node):
+        return node.s
 
-        def visitTuple(self, node, **kw):
-            return tuple([self.visit(i) for i in node.nodes])
+    def visitBytes(self, node):
+        return node.s
 
-        def visitList(self, node, **kw):
-            return [self.visit(i) for i in node.nodes]
+    def visitDict(self, node,**kw):
+        return dict([(self.visit(k), self.visit(v))
+                     for k, v in zip(node.keys, node.values)])
 
-        def visitUnaryAdd(self, node, **kw):
-            return +self.visit(node.getChildNodes()[0])
+    def visitTuple(self, node):
+        return tuple([self.visit(i) for i in node.elts])
 
-        def visitUnarySub(self, node, **kw):
-            return -self.visit(node.getChildNodes()[0])
+    def visitList(self, node):
+        return [self.visit(i) for i in node.elts]
 
-        def visitName(self, node, **kw):
-            if node.name == 'False':
-                return False
-            elif node.name == 'True':
-                return True
-            elif node.name == 'None':
-                return None
-            else:
-                raise SyntaxError("Unknown name: %s" % node.name)
-    else:
+    def visitUnaryOp(self, node):
+        import ast
+        if isinstance(node.op, ast.UAdd):
+            return +self.visit(node.operand)
+        elif isinstance(node.op, ast.USub):
+            return -self.visit(node.operand)
+        else:
+            raise SyntaxError("Unknown unary op: %r" % node.op)
 
-        def visit(self, node):
-            cls = node.__class__
-            meth = getattr(self, 'visit' + cls.__name__, self.default)
-            return meth(node)
+    def visitName(self, node):
+        if node.id == 'False':
+            return False
+        elif node.id == 'True':
+            return True
+        elif node.id == 'None':
+            return None
+        else:
+            raise SyntaxError("Unknown name: %s" % node.id)
 
-        def default(self, node):
-            raise SyntaxError("Unsupported source construct: %s"
-                              % node.__class__)
+    def visitNameConstant(self, node):
+        return node.value
 
-        def visitExpression(self, node):
-            return self.visit(node.body)
-
-        def visitNum(self, node):
-            return node.n
-
-        def visitStr(self, node):
-            return node.s
-
-        def visitBytes(self, node):
-            return node.s
-
-        def visitDict(self, node,**kw):
-            return dict([(self.visit(k), self.visit(v))
-                         for k, v in zip(node.keys, node.values)])
-
-        def visitTuple(self, node):
-            return tuple([self.visit(i) for i in node.elts])
-
-        def visitList(self, node):
-            return [self.visit(i) for i in node.elts]
-
-        def visitUnaryOp(self, node):
-            import ast
-            if isinstance(node.op, ast.UAdd):
-                return +self.visit(node.operand)
-            elif isinstance(node.op, ast.USub):
-                return -self.visit(node.operand)
-            else:
-                raise SyntaxError("Unknown unary op: %r" % node.op)
-
-        def visitName(self, node):
-            if node.id == 'False':
-                return False
-            elif node.id == 'True':
-                return True
-            elif node.id == 'None':
-                return None
-            else:
-                raise SyntaxError("Unknown name: %s" % node.id)
 
 def safe_eval(source):
     """
@@ -1104,8 +1092,8 @@ def safe_eval(source):
     Raises
     ------
     SyntaxError
-        If the code has invalid Python syntax, or if it contains non-literal
-        code.
+        If the code has invalid Python syntax, or if it contains
+        non-literal code.
 
     Examples
     --------
@@ -1128,18 +1116,7 @@ def safe_eval(source):
 
     """
     # Local import to speed up numpy's import time.
-    try:
-        import compiler
-    except ImportError:
-        import ast as compiler
-    walker = SafeEval()
-    try:
-        ast = compiler.parse(source, mode="eval")
-    except SyntaxError, err:
-        raise
-    try:
-        return walker.visit(ast)
-    except SyntaxError, err:
-        raise
+    import ast
 
+    return ast.literal_eval(source)
 #-----------------------------------------------------------------------------

@@ -24,7 +24,7 @@ combinations of the variables using (inside the comment portion of the inner loo
 
 This will exlude the pattern where var1 is value1 and var2 is value2 when
 the result is being generated.
-  
+
 
 In the main body each replace will use one entry from the list of named replacements
 
@@ -78,6 +78,8 @@ Example:
         3, 3, jim
 
 """
+from __future__ import division, absolute_import, print_function
+
 
 __all__ = ['process_str', 'process_file']
 
@@ -118,14 +120,14 @@ def parse_structure(astr, level):
     ind = 0
     line = 0
     spanlist = []
-    while 1:
+    while True:
         start = astr.find(loopbeg, ind)
         if start == -1:
             break
-        start2 = astr.find("*/",start)
-        start2 = astr.find("\n",start2)
-        fini1 = astr.find(loopend,start2)
-        fini2 = astr.find("\n",fini1)
+        start2 = astr.find("*/", start)
+        start2 = astr.find("\n", start2)
+        fini1 = astr.find(loopend, start2)
+        fini2 = astr.find("\n", fini1)
         line += astr.count("\n", ind, start2+1)
         spanlist.append((start, start2+1, fini1, fini2+1, line))
         line += astr.count("\n", start2+1, fini2)
@@ -148,7 +150,7 @@ def parse_values(astr):
     # split at ',' and a list of values returned.
     astr = parenrep.sub(paren_repl, astr)
     # replaces occurences of xxx*3 with xxx, xxx, xxx
-    astr = ','.join([plainrep.sub(paren_repl,x.strip())
+    astr = ','.join([plainrep.sub(paren_repl, x.strip())
                      for x in astr.split(',')])
     return astr.split(',')
 
@@ -186,19 +188,19 @@ def parse_loop_header(loophead) :
         elif nsub != size :
             msg = "Mismatch in number of values:\n%s = %s" % (name, vals)
             raise ValueError(msg)
-        names.append((name,vals))
+        names.append((name, vals))
 
 
     # Find any exclude variables
     excludes = []
-    
+
     for obj in exclude_re.finditer(loophead):
         span = obj.span()
         # find next newline
         endline = loophead.find('\n', span[1])
         substr = loophead[span[1]:endline]
         ex_names = exclude_vars_re.findall(substr)
-        excludes.append(dict(ex_names))        
+        excludes.append(dict(ex_names))
 
     # generate list of dictionaries, one for each template iteration
     dlist = []
@@ -206,7 +208,7 @@ def parse_loop_header(loophead) :
         raise ValueError("No substitution variables found")
     for i in range(nsub) :
         tmp = {}
-        for name,vals in names :
+        for name, vals in names :
             tmp[name] = vals[i]
         dlist.append(tmp)
     return dlist
@@ -269,14 +271,14 @@ def resolve_includes(source):
     d = os.path.dirname(source)
     fid = open(source)
     lines = []
-    for line in fid.readlines():
+    for line in fid:
         m = include_src_re.match(line)
         if m:
             fn = m.group('name')
             if not os.path.isabs(fn):
-                fn = os.path.join(d,fn)
+                fn = os.path.join(d, fn)
             if os.path.isfile(fn):
-                print ('Including file',fn)
+                print('Including file', fn)
                 lines.extend(resolve_includes(fn))
             else:
                 lines.append(line)
@@ -287,7 +289,7 @@ def resolve_includes(source):
 
 def process_file(source):
     lines = resolve_includes(source)
-    sourcefile = os.path.normcase(source).replace("\\","\\\\")
+    sourcefile = os.path.normcase(source).replace("\\", "\\\\")
     try:
         code = process_str(''.join(lines))
     except ValueError:
@@ -301,7 +303,7 @@ def unique_key(adict):
     # currently it works by appending together n of the letters of the
     #   current keys and increasing n until a unique key is found
     # -- not particularly quick
-    allkeys = adict.keys()
+    allkeys = list(adict.keys())
     done = False
     n = 1
     while not done:
@@ -321,10 +323,10 @@ if __name__ == "__main__":
         fid = sys.stdin
         outfile = sys.stdout
     else:
-        fid = open(file,'r')
+        fid = open(file, 'r')
         (base, ext) = os.path.splitext(file)
         newname = base
-        outfile = open(newname,'w')
+        outfile = open(newname, 'w')
 
     allstr = fid.read()
     try:

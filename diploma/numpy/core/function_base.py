@@ -1,14 +1,17 @@
+from __future__ import division, absolute_import, print_function
+
 __all__ = ['logspace', 'linspace']
 
-import numeric as _nx
-from numeric import array
+from . import numeric as _nx
+from .numeric import result_type, NaN
 
-def linspace(start, stop, num=50, endpoint=True, retstep=False):
+
+def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None):
     """
     Return evenly spaced numbers over a specified interval.
 
     Returns `num` evenly spaced samples, calculated over the
-    interval [`start`, `stop` ].
+    interval [`start`, `stop`].
 
     The endpoint of the interval can optionally be excluded.
 
@@ -22,13 +25,18 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False):
         evenly spaced samples, so that `stop` is excluded.  Note that the step
         size changes when `endpoint` is False.
     num : int, optional
-        Number of samples to generate. Default is 50.
+        Number of samples to generate. Default is 50. Must be non-negative.
     endpoint : bool, optional
         If True, `stop` is the last sample. Otherwise, it is not included.
         Default is True.
     retstep : bool, optional
         If True, return (`samples`, `step`), where `step` is the spacing
         between samples.
+    dtype : dtype, optional
+        The type of the output array.  If `dtype` is not given, infer the data
+        type from the other input arguments.
+
+        .. versionadded:: 1.9.0
 
     Returns
     -------
@@ -36,13 +44,15 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False):
         There are `num` equally spaced samples in the closed interval
         ``[start, stop]`` or the half-open interval ``[start, stop)``
         (depending on whether `endpoint` is True or False).
-    step : float (only if `retstep` is True)
+    step : float
+        Only returned if `retstep` is True
+
         Size of spacing between samples.
 
 
     See Also
     --------
-    arange : Similiar to `linspace`, but uses a step size (instead of the
+    arange : Similar to `linspace`, but uses a step size (instead of the
              number of samples).
     logspace : Samples uniformly distributed in log space.
 
@@ -72,23 +82,45 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False):
 
     """
     num = int(num)
-    if num <= 0:
-        return array([], float)
-    if endpoint:
-        if num == 1:
-            return array([float(start)])
-        step = (stop-start)/float((num-1))
-        y = _nx.arange(0, num) * step + start
-        y[-1] = stop
-    else:
-        step = (stop-start)/float(num)
-        y = _nx.arange(0, num) * step + start
-    if retstep:
-        return y, step
-    else:
-        return y
+    if num < 0:
+        raise ValueError("Number of samples, %s, must be non-negative." % num)
+    div = (num - 1) if endpoint else num
 
-def logspace(start,stop,num=50,endpoint=True,base=10.0):
+    # Convert float/complex array scalars to float, gh-3504
+    start = start * 1.
+    stop = stop * 1.
+
+    dt = result_type(start, stop, float(num))
+    if dtype is None:
+        dtype = dt
+
+    y = _nx.arange(0, num, dtype=dt)
+
+    if num > 1:
+        delta = stop - start
+        step = delta / div
+        if step == 0:
+            # Special handling for denormal numbers, gh-5437
+            y /= div
+            y *= delta
+        else:
+            y *= step
+    else:
+        # 0 and 1 item long sequences have an undefined step
+        step = NaN
+
+    y += start
+
+    if endpoint and num > 1:
+        y[-1] = stop
+
+    if retstep:
+        return y.astype(dtype, copy=False), step
+    else:
+        return y.astype(dtype, copy=False)
+
+
+def logspace(start, stop, num=50, endpoint=True, base=10.0, dtype=None):
     """
     Return numbers spaced evenly on a log scale.
 
@@ -114,6 +146,9 @@ def logspace(start,stop,num=50,endpoint=True,base=10.0):
         The base of the log space. The step size between the elements in
         ``ln(samples) / ln(base)`` (or ``log_base(samples)``) is uniform.
         Default is 10.0.
+    dtype : dtype
+        The type of the output array.  If `dtype` is not given, infer the data
+        type from the other input arguments.
 
     Returns
     -------
@@ -122,7 +157,7 @@ def logspace(start,stop,num=50,endpoint=True,base=10.0):
 
     See Also
     --------
-    arange : Similiar to linspace, with the step size specified instead of the
+    arange : Similar to linspace, with the step size specified instead of the
              number of samples. Note that, when used with a float endpoint, the
              endpoint may or may not be included.
     linspace : Similar to logspace, but with the samples uniformly distributed
@@ -134,7 +169,7 @@ def logspace(start,stop,num=50,endpoint=True,base=10.0):
 
     >>> y = np.linspace(start, stop, num=num, endpoint=endpoint)
     ... # doctest: +SKIP
-    >>> power(base, y)
+    >>> power(base, y).astype(dtype)
     ... # doctest: +SKIP
 
     Examples
@@ -162,6 +197,7 @@ def logspace(start,stop,num=50,endpoint=True,base=10.0):
     >>> plt.show()
 
     """
-    y = linspace(start,stop,num=num,endpoint=endpoint)
-    return _nx.power(base,y)
-
+    y = linspace(start, stop, num=num, endpoint=endpoint)
+    if dtype is None:
+        return _nx.power(base, y)
+    return _nx.power(base, y).astype(dtype)

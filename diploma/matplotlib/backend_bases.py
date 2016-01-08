@@ -1,4 +1,3 @@
-
 """
 Abstract base classes define the primitives that renderers and
 graphics contexts must implement to serve as a matplotlib backend
@@ -16,7 +15,7 @@ graphics contexts must implement to serve as a matplotlib backend
 
 :class:`Event`
     The base class for all of the matplotlib event
-    handling.  Derived classes suh as :class:`KeyEvent` and
+    handling.  Derived classes such as :class:`KeyEvent` and
     :class:`MouseEvent` store the meta data like keys and buttons
     pressed, x and y locations in pixel and
     :class:`~matplotlib.axes.Axes` coordinates.
@@ -26,10 +25,25 @@ graphics contexts must implement to serve as a matplotlib backend
     the 'show' callable is then set to Show.__call__, inherited from
     ShowBase.
 
+:class:`ToolContainerBase`
+     The base class for the Toolbar class of each interactive backend.
+
+:class:`StatusbarBase`
+    The base class for the messaging area.
 """
 
-from __future__ import division
-import os, warnings, time
+from __future__ import (absolute_import, division, print_function,
+                        unicode_literals)
+from contextlib import contextmanager
+
+from matplotlib.externals import six
+from matplotlib.externals.six.moves import xrange
+
+import os
+import sys
+import warnings
+import time
+import io
 
 import numpy as np
 import matplotlib.cbook as cbook
@@ -39,25 +53,90 @@ import matplotlib.widgets as widgets
 #import matplotlib.path as path
 from matplotlib import rcParams
 from matplotlib import is_interactive
+from matplotlib import get_backend
 from matplotlib._pylab_helpers import Gcf
 
 from matplotlib.transforms import Bbox, TransformedBbox, Affine2D
-import cStringIO
 
 import matplotlib.tight_bbox as tight_bbox
 import matplotlib.textpath as textpath
 from matplotlib.path import Path
+from matplotlib.cbook import mplDeprecation, warn_deprecated
+import matplotlib.backend_tools as tools
+
+try:
+    from importlib import import_module
+except:
+    # simple python 2.6 implementation (no relative imports)
+    def import_module(name):
+        __import__(name)
+        return sys.modules[name]
 
 try:
     from PIL import Image
     _has_pil = True
+    del Image
 except ImportError:
     _has_pil = False
 
-_backend_d = {}
 
-def register_backend(format, backend_class):
-    _backend_d[format] = backend_class
+_default_filetypes = {
+    'ps': 'Postscript',
+    'eps': 'Encapsulated Postscript',
+    'pdf': 'Portable Document Format',
+    'pgf': 'PGF code for LaTeX',
+    'png': 'Portable Network Graphics',
+    'raw': 'Raw RGBA bitmap',
+    'rgba': 'Raw RGBA bitmap',
+    'svg': 'Scalable Vector Graphics',
+    'svgz': 'Scalable Vector Graphics'
+}
+
+
+_default_backends = {
+    'ps': 'matplotlib.backends.backend_ps',
+    'eps': 'matplotlib.backends.backend_ps',
+    'pdf': 'matplotlib.backends.backend_pdf',
+    'pgf': 'matplotlib.backends.backend_pgf',
+    'png': 'matplotlib.backends.backend_agg',
+    'raw': 'matplotlib.backends.backend_agg',
+    'rgba': 'matplotlib.backends.backend_agg',
+    'svg': 'matplotlib.backends.backend_svg',
+    'svgz': 'matplotlib.backends.backend_svg',
+}
+
+
+def register_backend(format, backend, description=None):
+    """
+    Register a backend for saving to a given file format.
+
+    format : str
+        File extention
+
+    backend : module string or canvas class
+        Backend for handling file output
+
+    description : str, optional
+        Description of the file type.  Defaults to an empty string
+    """
+    if description is None:
+        description = ''
+    _default_backends[format] = backend
+    _default_filetypes[format] = description
+
+
+def get_registered_canvas_class(format):
+    """
+    Return the registered default canvas for given file format.
+    Handles deferred import of required backend.
+    """
+    if format not in _default_backends:
+        return None
+    backend_class = _default_backends[format]
+    if cbook.is_string_like(backend_class):
+        backend_class = import_module(backend_class).FigureCanvas
+        _default_backends[format] = backend_class
+    return backend_class
 
 
 class ShowBase(object):
@@ -72,7 +151,7 @@ class ShowBase(object):
         it is a boolean that overrides all other factors
         determining whether show blocks by calling mainloop().
         The other factors are:
-        it does not block if run inside "ipython --pylab";
+        it does not block if run inside ipython's "%pylab" mode
         it does not block in interactive mode.
         """
         managers = Gcf.get_all_fig_managers()
@@ -96,7 +175,11 @@ class ShowBase(object):
             ipython_pylab = not pyplot.show._needmain
             # IPython versions >= 0.10 tack the _needmain
             # attribute onto pyplot.show, and always set
-            # it to False, when in --pylab mode.
+            # it to False, when in %pylab mode.
+            ipython_pylab = ipython_pylab and get_backend() != 'WebAgg'
+            # TODO: The above is a hack to get the WebAgg backend
+            # working with ipython's `%pylab` mode until proper
+            # integration is implemented.
         except AttributeError:
             ipython_pylab = False
 
@@ -105,30 +188,32 @@ class ShowBase(object):
         if ipython_pylab:
             return
 
-        if not is_interactive():
+        if not is_interactive() or get_backend() == 'WebAgg':
             self.mainloop()
 
     def mainloop(self):
         pass
 
 
-
-class RendererBase:
+class RendererBase(object):
     """An abstract base class to handle drawing/rendering operations.
 
-    The following methods *must* be implemented in the backend:
+    The following methods must be implemented in the backend for full
+    functionality (though just implementing :meth:`draw_path` alone would
+    give a highly capable backend):
 
     * :meth:`draw_path`
     * :meth:`draw_image`
-    * :meth:`draw_text`
-    * :meth:`get_text_width_height_descent`
+    * :meth:`draw_gouraud_triangle`
 
     The following methods *should* be implemented in the backend for
     optimization reasons:
 
+    * :meth:`draw_text`
     * :meth:`draw_markers`
     * :meth:`draw_path_collection`
     * :meth:`draw_quad_mesh`
+
     """
     def __init__(self):
         self._texmanager = None
@@ -157,7 +242,8 @@ class RendererBase:
         """
         raise NotImplementedError
 
-    def draw_markers(self, gc, marker_path, marker_trans, path, trans, rgbFace=None):
+    def draw_markers(self, gc, marker_path, marker_trans, path,
+                     trans, rgbFace=None):
         """
         Draws a marker at each of the vertices in path.  This includes
         all vertices, including control points on curves.  To avoid
@@ -180,21 +266,24 @@ class RendererBase:
         """
         for vertices, codes in path.iter_segments(trans, simplify=False):
             if len(vertices):
-                x,y = vertices[-2:]
+                x, y = vertices[-2:]
                 self.draw_path(gc, marker_path,
-                               marker_trans + transforms.Affine2D().translate(x, y),
+                               marker_trans +
+                               transforms.Affine2D().translate(x, y),
                                rgbFace)
 
     def draw_path_collection(self, gc, master_transform, paths, all_transforms,
                              offsets, offsetTrans, facecolors, edgecolors,
-                             linewidths, linestyles, antialiaseds, urls):
+                             linewidths, linestyles, antialiaseds, urls,
+                             offset_position):
         """
         Draws a collection of paths selecting drawing properties from
         the lists *facecolors*, *edgecolors*, *linewidths*,
         *linestyles* and *antialiaseds*. *offsets* is a list of
         offsets to apply to each of the paths.  The offsets in
         *offsets* are first transformed by *offsetTrans* before being
-        applied.
+        applied.  *offset_position* may be either "screen" or "data"
+        depending on the space that the offsets are in.
 
         This provides a fallback implementation of
         :meth:`draw_path_collection` that makes multiple calls to
@@ -210,38 +299,38 @@ class RendererBase:
         """
         path_ids = []
         for path, transform in self._iter_collection_raw_paths(
-            master_transform, paths, all_transforms):
-            path_ids.append((path, transform))
+                master_transform, paths, all_transforms):
+            path_ids.append((path, transforms.Affine2D(transform)))
 
         for xo, yo, path_id, gc0, rgbFace in self._iter_collection(
-            gc, path_ids, offsets, offsetTrans, facecolors, edgecolors,
-            linewidths, linestyles, antialiaseds, urls):
+            gc, master_transform, all_transforms, path_ids, offsets,
+            offsetTrans, facecolors, edgecolors, linewidths, linestyles,
+                antialiaseds, urls, offset_position):
             path, transform = path_id
-            transform = transforms.Affine2D(transform.get_matrix()).translate(xo, yo)
+            transform = transforms.Affine2D(
+                            transform.get_matrix()).translate(xo, yo)
             self.draw_path(gc0, path, transform, rgbFace)
 
     def draw_quad_mesh(self, gc, master_transform, meshWidth, meshHeight,
                        coordinates, offsets, offsetTrans, facecolors,
-                       antialiased, showedges):
+                       antialiased, edgecolors):
         """
         This provides a fallback implementation of
         :meth:`draw_quad_mesh` that generates paths and then calls
         :meth:`draw_path_collection`.
         """
+
         from matplotlib.collections import QuadMesh
         paths = QuadMesh.convert_mesh_to_paths(
             meshWidth, meshHeight, coordinates)
 
-        if showedges:
-            edgecolors = np.array([[0.0, 0.0, 0.0, 1.0]], np.float_)
-            linewidths = np.array([gc.get_linewidth()], np.float_)
-        else:
+        if edgecolors is None:
             edgecolors = facecolors
-            linewidths = np.array([gc.get_linewidth()], np.float_)
+        linewidths = np.array([gc.get_linewidth()], np.float_)
 
         return self.draw_path_collection(
             gc, master_transform, paths, [], offsets, offsetTrans, facecolors,
-            edgecolors, linewidths, [], [antialiased], [None])
+            edgecolors, linewidths, [], [antialiased], [None], 'screen')
 
     def draw_gouraud_triangle(self, gc, points, colors, transform):
         """
@@ -289,9 +378,9 @@ class RendererBase:
         The backend should take each yielded path and transform and
         create an object that can be referenced (reused) later.
         """
-        Npaths      = len(paths)
+        Npaths = len(paths)
         Ntransforms = len(all_transforms)
-        N           = max(Npaths, Ntransforms)
+        N = max(Npaths, Ntransforms)
 
         if Npaths == 0:
             return
@@ -300,12 +389,30 @@ class RendererBase:
         for i in xrange(N):
             path = paths[i % Npaths]
             if Ntransforms:
-                transform = all_transforms[i % Ntransforms]
+                transform = Affine2D(all_transforms[i % Ntransforms])
             yield path, transform + master_transform
 
-    def _iter_collection(self, gc, path_ids, offsets, offsetTrans, facecolors,
-                         edgecolors, linewidths, linestyles, antialiaseds,
-                         urls):
+    def _iter_collection_uses_per_path(self, paths, all_transforms,
+                                       offsets, facecolors, edgecolors):
+        """
+        Compute how many times each raw path object returned by
+        _iter_collection_raw_paths would be used when calling
+        _iter_collection. This is intended for the backend to decide
+        on the tradeoff between using the paths in-line and storing
+        them once and reusing. Rounds up in case the number of uses
+        is not the same for every path.
+        """
+        Npaths = len(paths)
+        if Npaths == 0 or (len(facecolors) == 0 and len(edgecolors) == 0):
+            return 0
+        Npath_ids = max(Npaths, len(all_transforms))
+        N = max(Npath_ids, len(offsets))
+        return (N + Npath_ids - 1) // Npath_ids
+
+    def _iter_collection(self, gc, master_transform, all_transforms,
+                         path_ids, offsets, offsetTrans, facecolors,
+                         edgecolors, linewidths, linestyles,
+                         antialiaseds, urls, offset_position):
         """
         This is a helper method (along with
         :meth:`_iter_collection_raw_paths`) to make it easier to write
@@ -331,15 +438,16 @@ class RendererBase:
         *path_ids*; *gc* is a graphics context and *rgbFace* is a color to
         use for filling the path.
         """
-        Npaths      = len(path_ids)
-        Noffsets    = len(offsets)
-        N           = max(Npaths, Noffsets)
+        Ntransforms = len(all_transforms)
+        Npaths = len(path_ids)
+        Noffsets = len(offsets)
+        N = max(Npaths, Noffsets)
         Nfacecolors = len(facecolors)
         Nedgecolors = len(edgecolors)
         Nlinewidths = len(linewidths)
         Nlinestyles = len(linestyles)
-        Naa         = len(antialiaseds)
-        Nurls       = len(urls)
+        Naa = len(antialiaseds)
+        Nurls = len(urls)
 
         if (Nfacecolors == 0 and Nedgecolors == 0) or Npaths == 0:
             return
@@ -360,23 +468,37 @@ class RendererBase:
             path_id = path_ids[i % Npaths]
             if Noffsets:
                 xo, yo = toffsets[i % Noffsets]
+                if offset_position == 'data':
+                    if Ntransforms:
+                        transform = (
+                            Affine2D(all_transforms[i % Ntransforms]) +
+                            master_transform)
+                    else:
+                        transform = master_transform
+                    xo, yo = transform.transform_point((xo, yo))
+                    xp, yp = transform.transform_point((0, 0))
+                    xo = -(xp - xo)
+                    yo = -(yp - yo)
+            if not (np.isfinite(xo) and np.isfinite(yo)):
+                continue
             if Nfacecolors:
                 rgbFace = facecolors[i % Nfacecolors]
             if Nedgecolors:
-                fg = edgecolors[i % Nedgecolors]
-                if Nfacecolors == 0 and len(fg)==4:
-                    gc0.set_alpha(fg[3])
-                gc0.set_foreground(fg)
                 if Nlinewidths:
                     gc0.set_linewidth(linewidths[i % Nlinewidths])
                 if Nlinestyles:
                     gc0.set_dashes(*linestyles[i % Nlinestyles])
-            if rgbFace is not None and len(rgbFace)==4:
+                fg = edgecolors[i % Nedgecolors]
+                if len(fg) == 4:
+                    if fg[3] == 0.0:
+                        gc0.set_linewidth(0)
+                    else:
+                        gc0.set_foreground(fg)
+                else:
+                    gc0.set_foreground(fg)
+            if rgbFace is not None and len(rgbFace) == 4:
                 if rgbFace[3] == 0:
                     rgbFace = None
-                else:
-                    gc0.set_alpha(rgbFace[3])
-                    rgbFace = rgbFace[:3]
             gc0.set_antialiased(antialiaseds[i % Naa])
             if Nurls:
                 gc0.set_url(urls[i % Nurls])
@@ -414,8 +536,8 @@ class RendererBase:
 
     def option_image_nocomposite(self):
         """
-        override this method for renderers that do not necessarily
-        want to rescale and composite raster images. (like SVG)
+        override this method for renderers that do not necessarily always
+        want to rescale and composite raster images. (like SVG, PDF, or PS)
         """
         return False
 
@@ -426,12 +548,12 @@ class RendererBase:
         """
         return False
 
-    def draw_tex(self, gc, x, y, s, prop, angle, ismath='TeX!'):
+    def draw_tex(self, gc, x, y, s, prop, angle, ismath='TeX!', mtext=None):
         """
         """
         self._draw_text_as_path(gc, x, y, s, prop, angle, ismath="TeX")
 
-    def draw_text(self, gc, x, y, s, prop, angle, ismath=False):
+    def draw_text(self, gc, x, y, s, prop, angle, ismath=False, mtext=None):
         """
         Draw the text instance
 
@@ -442,16 +564,19 @@ class RendererBase:
             the x location of the text in display coords
 
         *y*
-            the y location of the text in display coords
+            the y location of the text baseline in display coords
 
         *s*
-             a :class:`matplotlib.text.Text` instance
+            the text string
 
         *prop*
           a :class:`matplotlib.font_manager.FontProperties` instance
 
         *angle*
             the rotation angle in degrees
+
+        *mtext*
+            a :class:`matplotlib.text.Text` instance
 
         **backend implementers note**
 
@@ -461,7 +586,7 @@ class RendererBase:
 
             if 0: bbox_artist(self, renderer)
 
-        to if 1, and then the actual bounding box will be blotted along with
+        to if 1, and then the actual bounding box will be plotted along with
         your text.
         """
 
@@ -488,23 +613,24 @@ class RendererBase:
         fontsize = self.points_to_pixels(prop.get_size_in_points())
 
         if ismath == "TeX":
-            verts, codes = text2path.get_text_path(prop, s, ismath=False, usetex=True)
+            verts, codes = text2path.get_text_path(prop, s, ismath=False,
+                                                   usetex=True)
         else:
-            verts, codes = text2path.get_text_path(prop, s, ismath=ismath, usetex=False)
+            verts, codes = text2path.get_text_path(prop, s, ismath=ismath,
+                                                   usetex=False)
 
         path = Path(verts, codes)
-        angle = angle/180.*3.141592
+        angle = angle / 180. * 3.141592
         if self.flipy():
-            transform = Affine2D().scale(fontsize/text2path.FONT_SCALE,
-                                         fontsize/text2path.FONT_SCALE).\
-                                         rotate(angle).translate(x, self.height-y)
+            transform = Affine2D().scale(fontsize / text2path.FONT_SCALE,
+                                         fontsize / text2path.FONT_SCALE)
+            transform = transform.rotate(angle).translate(x, self.height - y)
         else:
-            transform = Affine2D().scale(fontsize/text2path.FONT_SCALE,
-                                         fontsize/text2path.FONT_SCALE).\
-                                         rotate(angle).translate(x, y)
+            transform = Affine2D().scale(fontsize / text2path.FONT_SCALE,
+                                         fontsize / text2path.FONT_SCALE)
+            transform = transform.rotate(angle).translate(x, y)
 
         return path, transform
-
 
     def _draw_text_as_path(self, gc, x, y, s, prop, angle, ismath):
         """
@@ -522,13 +648,12 @@ class RendererBase:
         *ismath*
           If True, use mathtext parser. If "TeX", use *usetex* mode.
         """
-
-        path, transform = self._get_text_path_transform(x, y, s, prop, angle, ismath)
-        color = gc.get_rgb()[:3]
+        path, transform = self._get_text_path_transform(
+            x, y, s, prop, angle, ismath)
+        color = gc.get_rgb()
 
         gc.set_linewidth(0.0)
         self.draw_path(gc, path, transform, rgbFace=color)
-
 
     def get_text_width_height_descent(self, s, prop, ismath):
         """
@@ -536,7 +661,7 @@ class RendererBase:
         baseline (descent), in display coords of the string s with
         :class:`~matplotlib.font_manager.FontProperties` prop
         """
-        if ismath=='TeX':
+        if ismath == 'TeX':
             # todo: handle props
             size = prop.get_size_in_points()
             texmanager = self._text2path.get_texmanager()
@@ -546,24 +671,22 @@ class RendererBase:
             return w, h, d
 
         dpi = self.points_to_pixels(72)
-        fontscale = self._text2path.FONT_SCALE
         if ismath:
-            width, height, descent, glyphs, rects = \
-                   self._text2path.mathtext_parser.parse(s, dpi, prop)
-            return width, height, descent
+            dims = self._text2path.mathtext_parser.parse(s, dpi, prop)
+            return dims[0:3]  # return width, height, descent
 
         flags = self._text2path._get_hinting_flag()
         font = self._text2path._get_font(prop)
         size = prop.get_size_in_points()
         font.set_size(size, dpi)
-        font.set_text(s, 0.0, flags=flags)  # the width and height of unrotated string
+        # the width and height of unrotated string
+        font.set_text(s, 0.0, flags=flags)
         w, h = font.get_width_height()
         d = font.get_descent()
         w /= 64.0  # convert from subpixels
         h /= 64.0
         d /= 64.0
         return w, h, d
-
 
     def flipy(self):
         """
@@ -586,7 +709,6 @@ class RendererBase:
             self._texmanager = TexManager()
         return self._texmanager
 
-
     def new_gc(self):
         """
         Return an instance of a :class:`GraphicsContextBase`
@@ -603,7 +725,7 @@ class RendererBase:
         return points converted to pixels
 
         You need to override this function (unless your backend
-        doesn't have a dpi, eg, postscript or svg).  Some imaging
+        doesn't have a dpi, e.g., postscript or svg).  Some imaging
         systems assume some value for pixels per inch::
 
             points to pixels = points * pixels_per_inch/72.0 * dpi/72.0
@@ -644,22 +766,22 @@ class RendererBase:
         pass
 
 
-class GraphicsContextBase:
+class GraphicsContextBase(object):
     """
     An abstract base class that provides color, line styles, etc...
     """
 
     # a mapping from dash styles to suggested offset, dash pairs
     dashd = {
-        'solid'   : (None, None),
-        'dashed'  : (0, (6.0, 6.0)),
-        'dashdot' : (0, (3.0, 5.0, 1.0, 5.0)),
-        'dotted'  : (0, (1.0, 3.0)),
-              }
+        'solid': (None, None),
+        'dashed': (0, (6.0, 6.0)),
+        'dashdot': (0, (3.0, 5.0, 1.0, 5.0)),
+        'dotted': (0, (1.0, 3.0)),
+    }
 
     def __init__(self):
         self._alpha = 1.0
-        self._forced_alpha = False # if True, _alpha overrides A from RGBA
+        self._forced_alpha = False  # if True, _alpha overrides A from RGBA
         self._antialiased = 1  # use 0,1 not True, False for extension code
         self._capstyle = 'butt'
         self._cliprect = None
@@ -668,14 +790,17 @@ class GraphicsContextBase:
         self._joinstyle = 'round'
         self._linestyle = 'solid'
         self._linewidth = 1
-        self._rgb = (0.0, 0.0, 0.0)
+        self._rgb = (0.0, 0.0, 0.0, 1.0)
         self._hatch = None
         self._url = None
+        self._gid = None
         self._snap = None
+        self._sketch = None
 
     def copy_properties(self, gc):
         'Copy properties from gc to self'
         self._alpha = gc._alpha
+        self._forced_alpha = gc._forced_alpha
         self._antialiased = gc._antialiased
         self._capstyle = gc._capstyle
         self._cliprect = gc._cliprect
@@ -687,7 +812,9 @@ class GraphicsContextBase:
         self._rgb = gc._rgb
         self._hatch = gc._hatch
         self._url = gc._url
+        self._gid = gc._gid
         self._snap = gc._snap
+        self._sketch = gc._sketch
 
     def restore(self):
         """
@@ -715,7 +842,8 @@ class GraphicsContextBase:
 
     def get_clip_rectangle(self):
         """
-        Return the clip rectangle as a :class:`~matplotlib.transforms.Bbox` instance
+        Return the clip rectangle as a :class:`~matplotlib.transforms.Bbox`
+        instance
         """
         return self._cliprect
 
@@ -743,6 +871,13 @@ class GraphicsContextBase:
         Default value is None
         """
         return self._dashes
+
+    def get_forced_alpha(self):
+        """
+        Return whether the value given by get_alpha() should be used to
+        override any other alpha-channel values.
+        """
+        return self._forced_alpha
 
     def get_joinstyle(self):
         """
@@ -775,6 +910,12 @@ class GraphicsContextBase:
         """
         return self._url
 
+    def get_gid(self):
+        """
+        Return the object identifier if one is set, None otherwise.
+        """
+        return self._gid
+
     def get_snap(self):
         """
         returns the snap setting which may be:
@@ -790,14 +931,19 @@ class GraphicsContextBase:
 
     def set_alpha(self, alpha):
         """
-        Set the alpha value used for blending - not supported on
-        all backends
+        Set the alpha value used for blending - not supported on all backends.
+        If ``alpha=None`` (the default), the alpha components of the
+        foreground and fill colors will be used to set their respective
+        transparencies (where applicable); otherwise, ``alpha`` will override
+        them.
         """
         if alpha is not None:
             self._alpha = alpha
             self._forced_alpha = True
         else:
+            self._alpha = 1.0
             self._forced_alpha = False
+        self.set_foreground(self._rgb, isRGBA=True)
 
     def set_antialiased(self, b):
         """
@@ -805,8 +951,10 @@ class GraphicsContextBase:
         """
 
         # use 0, 1 to make life easier on extension code trying to read the gc
-        if b: self._antialiased = 1
-        else: self._antialiased = 0
+        if b:
+            self._antialiased = 1
+        else:
+            self._antialiased = 0
 
     def set_capstyle(self, cs):
         """
@@ -828,7 +976,11 @@ class GraphicsContextBase:
         Set the clip path and transformation.  Path should be a
         :class:`~matplotlib.transforms.TransformedPath` instance.
         """
-        assert path is None or isinstance(path, transforms.TransformedPath)
+        if path is not None and not isinstance(path,
+                transforms.TransformedPath):
+            msg = ("Path should be a matplotlib.transforms.TransformedPath"
+                   "instance.")
+            raise ValueError(msg)
         self._clippath = path
 
     def set_dashes(self, dash_offset, dash_list):
@@ -839,35 +991,43 @@ class GraphicsContextBase:
             is the offset (usually 0).
 
         *dash_list*
-            specifies the on-off sequence as points.  ``(None, None)`` specifies a solid line
+            specifies the on-off sequence as points.
+            ``(None, None)`` specifies a solid line
 
         """
+        if dash_list is not None:
+            dl = np.asarray(dash_list)
+            if np.any(dl <= 0.0):
+                raise ValueError("All values in the dash list must be positive")
         self._dashes = dash_offset, dash_list
 
-    def set_foreground(self, fg, isRGB=False):
+    def set_foreground(self, fg, isRGBA=False):
         """
         Set the foreground color.  fg can be a MATLAB format string, a
         html hex color string, an rgb or rgba unit tuple, or a float between 0
         and 1.  In the latter case, grayscale is used.
 
-        If you know fg is rgb or rgba, set ``isRGB=True`` for
-        efficiency.
+        If you know fg is rgba, set ``isRGBA=True`` for efficiency.
         """
-        if isRGB:
+        if self._forced_alpha and isRGBA:
+            self._rgb = fg[:3] + (self._alpha,)
+        elif self._forced_alpha:
+            self._rgb = colors.colorConverter.to_rgba(fg, self._alpha)
+        elif isRGBA:
             self._rgb = fg
         else:
             self._rgb = colors.colorConverter.to_rgba(fg)
-        if len(self._rgb) == 4 and not self._forced_alpha:
-            self.set_alpha(self._rgb[3])
-            # Use set_alpha method here so that subclasses will
-            # be calling their own version, which may set their
-            # own attributes.
 
     def set_graylevel(self, frac):
         """
         Set the foreground color to be a gray level with *frac*
         """
-        self._rgb = (frac, frac, frac)
+        # When removing, remember to remove all overrides in subclasses.
+        msg = ("set_graylevel is deprecated for removal in 1.6; "
+                "you can achieve the same result by using "
+                "set_foreground((frac, frac, frac))")
+        warnings.warn(msg, mplDeprecation)
+        self._rgb = (frac, frac, frac, self._alpha)
 
     def set_joinstyle(self, js):
         """
@@ -882,7 +1042,7 @@ class GraphicsContextBase:
         """
         Set the linewidth in points
         """
-        self._linewidth = w
+        self._linewidth = float(w)
 
     def set_linestyle(self, style):
         """
@@ -896,7 +1056,7 @@ class GraphicsContextBase:
          'dotted'  : (0, (1.0, 3.0)),
         """
 
-        if style in self.dashd.keys():
+        if style in self.dashd:
             offset, dashes = self.dashd[style]
         elif isinstance(style, tuple):
             offset, dashes = style
@@ -911,6 +1071,12 @@ class GraphicsContextBase:
         Sets the url for links in compatible backends
         """
         self._url = url
+
+    def set_gid(self, id):
+        """
+        Sets the id.
+        """
+        self._gid = id
 
     def set_snap(self, snap):
         """
@@ -944,6 +1110,53 @@ class GraphicsContextBase:
         if self._hatch is None:
             return None
         return Path.hatch(self._hatch, density)
+
+    def get_sketch_params(self):
+        """
+        Returns the sketch parameters for the artist.
+
+        Returns
+        -------
+        sketch_params : tuple or `None`
+
+        A 3-tuple with the following elements:
+
+          * `scale`: The amplitude of the wiggle perpendicular to the
+            source line.
+
+          * `length`: The length of the wiggle along the line.
+
+          * `randomness`: The scale factor by which the length is
+            shrunken or expanded.
+
+        May return `None` if no sketch parameters were set.
+        """
+        return self._sketch
+
+    def set_sketch_params(self, scale=None, length=None, randomness=None):
+        """
+        Sets the sketch parameters.
+
+        Parameters
+        ----------
+
+        scale : float, optional
+            The amplitude of the wiggle perpendicular to the source
+            line, in pixels.  If scale is `None`, or not provided, no
+            sketch filter will be provided.
+
+        length : float, optional
+             The length of the wiggle along the line, in pixels
+             (default 128.0)
+
+        randomness : float, optional
+            The scale factor by which the length is shrunken or
+            expanded (default 16.0)
+        """
+        if scale is None:
+            self._sketch = None
+        else:
+            self._sketch = (scale, length or 128.0, randomness or 16.0)
 
 
 class TimerBase(object):
@@ -996,7 +1209,7 @@ class TimerBase(object):
         if callbacks is None:
             self.callbacks = []
         else:
-            self.callbacks = callbacks[:] # Create a copy
+            self.callbacks = callbacks[:]  # Create a copy
 
         if interval is None:
             self._interval = 1000
@@ -1018,7 +1231,7 @@ class TimerBase(object):
         to reset the timer interval first if provided.
         '''
         if interval is not None:
-            self.set_interval(interval)
+            self._set_interval(interval)
         self._timer_start()
 
     def stop(self):
@@ -1085,19 +1298,21 @@ class TimerBase(object):
     def _on_timer(self):
         '''
         Runs all function that have been registered as callbacks. Functions
-        can return False if they should not be called any more. If there
+        can return False (or 0) if they should not be called any more. If there
         are no callbacks, the timer is automatically stopped.
         '''
-        for func,args,kwargs in self.callbacks:
+        for func, args, kwargs in self.callbacks:
             ret = func(*args, **kwargs)
+            # docstring above explains why we use `if ret == False` here,
+            # instead of `if not ret`.
             if ret == False:
-                self.callbacks.remove((func,args,kwargs))
+                self.callbacks.remove((func, args, kwargs))
 
         if len(self.callbacks) == 0:
             self.stop()
 
 
-class Event:
+class Event(object):
     """
     A matplotlib event.  Attach additional attributes as defined in
     :meth:`FigureCanvasBase.mpl_connect`.  The following attributes
@@ -1114,10 +1329,11 @@ class Event:
 
 
     """
-    def __init__(self, name, canvas,guiEvent=None):
+    def __init__(self, name, canvas, guiEvent=None):
         self.name = name
         self.canvas = canvas
         self.guiEvent = guiEvent
+
 
 class IdleEvent(Event):
     """
@@ -1126,11 +1342,13 @@ class IdleEvent(Event):
     """
     pass
 
+
 class DrawEvent(Event):
     """
     An event triggered by a draw operation on the canvas
 
-    In addition to the :class:`Event` attributes, the following event attributes are defined:
+    In addition to the :class:`Event` attributes, the following event
+    attributes are defined:
 
     *renderer*
         the :class:`RendererBase` instance for the draw event
@@ -1140,11 +1358,13 @@ class DrawEvent(Event):
         Event.__init__(self, name, canvas)
         self.renderer = renderer
 
+
 class ResizeEvent(Event):
     """
     An event triggered by a canvas resize
 
-    In addition to the :class:`Event` attributes, the following event attributes are defined:
+    In addition to the :class:`Event` attributes, the following event
+    attributes are defined:
 
     *width*
         width of the canvas in pixels
@@ -1157,14 +1377,17 @@ class ResizeEvent(Event):
         Event.__init__(self, name, canvas)
         self.width, self.height = canvas.get_width_height()
 
+
 class CloseEvent(Event):
     """
     An event triggered by a figure being closed
 
-    In addition to the :class:`Event` attributes, the following event attributes are defined:
+    In addition to the :class:`Event` attributes, the following event
+    attributes are defined:
     """
     def __init__(self, name, canvas, guiEvent=None):
         Event.__init__(self, name, canvas, guiEvent)
+
 
 class LocationEvent(Event):
     """
@@ -1192,24 +1415,22 @@ class LocationEvent(Event):
         y coord of mouse in data coords
 
     """
-    x      = None       # x position - pixels from left of canvas
-    y      = None       # y position - pixels from right of canvas
-    inaxes = None       # the Axes instance if mouse us over axes
-    xdata  = None       # x coord of mouse in data coords
-    ydata  = None       # y coord of mouse in data coords
+    x = None       # x position - pixels from left of canvas
+    y = None       # y position - pixels from right of canvas
+    inaxes = None  # the Axes instance if mouse us over axes
+    xdata = None   # x coord of mouse in data coords
+    ydata = None   # y coord of mouse in data coords
 
     # the last event that was triggered before this one
     lastevent = None
 
-    def __init__(self, name, canvas, x, y,guiEvent=None):
+    def __init__(self, name, canvas, x, y, guiEvent=None):
         """
         *x*, *y* in figure coords, 0,0 = bottom, left
         """
-        Event.__init__(self, name, canvas,guiEvent=guiEvent)
+        Event.__init__(self, name, canvas, guiEvent=guiEvent)
         self.x = x
         self.y = y
-
-
 
         if x is None or y is None:
             # cannot check if event was in axes if no x,y info
@@ -1219,29 +1440,30 @@ class LocationEvent(Event):
 
         # Find all axes containing the mouse
         if self.canvas.mouse_grabber is None:
-            axes_list = [a for a in self.canvas.figure.get_axes() if a.in_axes(self)]
+            axes_list = [a for a in self.canvas.figure.get_axes()
+                         if a.in_axes(self)]
         else:
             axes_list = [self.canvas.mouse_grabber]
 
-        if len(axes_list) == 0: # None found
+        if len(axes_list) == 0:  # None found
             self.inaxes = None
             self._update_enter_leave()
             return
-        elif (len(axes_list) > 1): # Overlap, get the highest zorder
-            axCmp = lambda _x,_y: cmp(_x.zorder, _y.zorder)
-            axes_list.sort(axCmp)
-            self.inaxes = axes_list[-1] # Use the highest zorder
-        else: # Just found one hit
+        elif (len(axes_list) > 1):  # Overlap, get the highest zorder
+            axes_list.sort(key=lambda x: x.zorder)
+            self.inaxes = axes_list[-1]  # Use the highest zorder
+        else:  # Just found one hit
             self.inaxes = axes_list[0]
 
         try:
-            xdata, ydata = self.inaxes.transData.inverted().transform_point((x, y))
+            trans = self.inaxes.transData.inverted()
+            xdata, ydata = trans.transform_point((x, y))
         except ValueError:
-            self.xdata  = None
-            self.ydata  = None
+            self.xdata = None
+            self.ydata = None
         else:
-            self.xdata  = xdata
-            self.ydata  = ydata
+            self.xdata = xdata
+            self.ydata = ydata
 
         self._update_enter_leave()
 
@@ -1249,7 +1471,7 @@ class LocationEvent(Event):
         'process the figure/axes enter leave events'
         if LocationEvent.lastevent is not None:
             last = LocationEvent.lastevent
-            if last.inaxes!=self.inaxes:
+            if last.inaxes != self.inaxes:
                 # process axes enter/leave events
                 try:
                     if last.inaxes is not None:
@@ -1272,22 +1494,25 @@ class LocationEvent(Event):
         LocationEvent.lastevent = self
 
 
-
-
-
 class MouseEvent(LocationEvent):
     """
-    A mouse event ('button_press_event', 'button_release_event', 'scroll_event',
-    'motion_notify_event').
+    A mouse event ('button_press_event',
+                   'button_release_event',
+                   'scroll_event',
+                   'motion_notify_event').
 
     In addition to the :class:`Event` and :class:`LocationEvent`
     attributes, the following attributes are defined:
 
     *button*
-        button pressed None, 1, 2, 3, 'up', 'down' (up and down are used for scroll events)
+        button pressed None, 1, 2, 3, 'up', 'down' (up and down are used
+        for scroll events).  Note that in the nbagg backend, both the
+        middle and right clicks return 3 since right clicking will bring
+        up the context menu in some browsers.
 
     *key*
-        the key pressed: None, chr(range(255), 'shift', 'win', or 'control'
+        the key depressed when the mouse event triggered (see
+        :class:`KeyEvent`)
 
     *step*
         number of scroll steps (positive for 'up', negative for 'down')
@@ -1296,21 +1521,22 @@ class MouseEvent(LocationEvent):
     Example usage::
 
         def on_press(event):
-            print 'you pressed', event.button, event.xdata, event.ydata
+            print('you pressed', event.button, event.xdata, event.ydata)
 
         cid = fig.canvas.mpl_connect('button_press_event', on_press)
 
     """
-    x      = None       # x position - pixels from left of canvas
-    y      = None       # y position - pixels from right of canvas
-    button = None       # button pressed None, 1, 2, 3
-    inaxes = None       # the Axes instance if mouse us over axes
-    xdata  = None       # x coord of mouse in data coords
-    ydata  = None       # y coord of mouse in data coords
-    step   = None       # scroll steps for scroll events
+    x = None         # x position - pixels from left of canvas
+    y = None         # y position - pixels from right of canvas
+    button = None    # button pressed None, 1, 2, 3
+    dblclick = None  # whether or not the event is the result of a double click
+    inaxes = None    # the Axes instance if mouse us over axes
+    xdata = None     # x coord of mouse in data coords
+    ydata = None     # y coord of mouse in data coords
+    step = None      # scroll steps for scroll events
 
     def __init__(self, name, canvas, x, y, button=None, key=None,
-                 step=0, guiEvent=None):
+                 step=0, dblclick=False, guiEvent=None):
         """
         x, y in figure coords, 0,0 = bottom, left
         button pressed None, 1, 2, 3, 'up', 'down'
@@ -1319,6 +1545,14 @@ class MouseEvent(LocationEvent):
         self.button = button
         self.key = key
         self.step = step
+        self.dblclick = dblclick
+
+    def __str__(self):
+        return ("MPL MouseEvent: xy=(%d,%d) xydata=(%s,%s) button=%s " +
+                "dblclick=%s inaxes=%s") % (self.x, self.y, self.xdata,
+                                            self.ydata, self.button,
+                                            self.dblclick, self.inaxes)
+
 
 class PickEvent(Event):
     """
@@ -1334,7 +1568,7 @@ class PickEvent(Event):
         the :class:`~matplotlib.artist.Artist` picked
 
     other
-        extra class dependent attrs -- eg a
+        extra class dependent attrs -- e.g., a
         :class:`~matplotlib.lines.Line2D` pick may define different
         extra attributes than a
         :class:`~matplotlib.collections.PatchCollection` pick event
@@ -1348,12 +1582,13 @@ class PickEvent(Event):
             thisline = event.artist
             xdata, ydata = thisline.get_data()
             ind = event.ind
-            print 'on pick line:', zip(xdata[ind], ydata[ind])
+            print('on pick line:', zip(xdata[ind], ydata[ind]))
 
         cid = fig.canvas.mpl_connect('pick_event', on_pick)
 
     """
-    def __init__(self, name, canvas, mouseevent, artist, guiEvent=None, **kwargs):
+    def __init__(self, name, canvas, mouseevent, artist,
+                 guiEvent=None, **kwargs):
         Event.__init__(self, name, canvas, guiEvent)
         self.mouseevent = mouseevent
         self.artist = artist
@@ -1371,16 +1606,23 @@ class KeyEvent(LocationEvent):
     attributes, the following attributes are defined:
 
     *key*
-        the key pressed: None, chr(range(255), shift, win, or control
+        the key(s) pressed. Could be **None**, a single case sensitive ascii
+        character ("g", "G", "#", etc.), a special key
+        ("control", "shift", "f1", "up", etc.) or a
+        combination of the above (e.g., "ctrl+alt+g", "ctrl+alt+G").
 
-    This interface may change slightly when better support for
-    modifier keys is included.
+    .. note::
+
+        Modifier keys will be prefixed to the pressed key and will be in the
+        order "ctrl", "alt", "super". The exception to this rule is when the
+        pressed key is itself a modifier key, therefore "ctrl+alt" and
+        "alt+control" can both be valid key values.
 
 
     Example usage::
 
         def on_key(event):
-            print 'you pressed', event.key, event.xdata, event.ydata
+            print('you pressed', event.key, event.xdata, event.ydata)
 
         cid = fig.canvas.mpl_connect('key_press_event', on_key)
 
@@ -1388,7 +1630,6 @@ class KeyEvent(LocationEvent):
     def __init__(self, name, canvas, key, x=0, y=0, guiEvent=None):
         LocationEvent.__init__(self, name, canvas, x, y, guiEvent=guiEvent)
         self.key = key
-
 
 
 class FigureCanvasBase(object):
@@ -1417,28 +1658,54 @@ class FigureCanvasBase(object):
         'axes_enter_event',
         'axes_leave_event',
         'close_event'
-        ]
+    ]
 
+    supports_blit = True
+    fixed_dpi = None
+
+    filetypes = _default_filetypes
+    if _has_pil:
+        # JPEG support
+        register_backend('jpg', 'matplotlib.backends.backend_agg',
+                         'Joint Photographic Experts Group')
+        register_backend('jpeg', 'matplotlib.backends.backend_agg',
+                         'Joint Photographic Experts Group')
+
+        # TIFF support
+        register_backend('tif', 'matplotlib.backends.backend_agg',
+                         'Tagged Image File Format')
+        register_backend('tiff', 'matplotlib.backends.backend_agg',
+                         'Tagged Image File Format')
 
     def __init__(self, figure):
+        self._is_idle_drawing = True
+        self._is_saving = False
         figure.set_canvas(self)
         self.figure = figure
         # a dictionary from event name to a dictionary that maps cid->func
         self.callbacks = cbook.CallbackRegistry()
         self.widgetlock = widgets.LockDraw()
-        self._button     = None  # the button pressed
-        self._key        = None  # the key pressed
+        self._button = None  # the button pressed
+        self._key = None  # the key pressed
         self._lastx, self._lasty = None, None
-        self.button_pick_id = self.mpl_connect('button_press_event',self.pick)
-        self.scroll_pick_id = self.mpl_connect('scroll_event',self.pick)
-        self.mouse_grabber = None # the axes currently grabbing mouse
+        self.button_pick_id = self.mpl_connect('button_press_event', self.pick)
+        self.scroll_pick_id = self.mpl_connect('scroll_event', self.pick)
+        self.mouse_grabber = None  # the axes currently grabbing mouse
+        self.toolbar = None  # NavigationToolbar2 will set me
+        self._is_idle_drawing = False
 
-        if False:
-            ## highlight the artists that are hit
-            self.mpl_connect('motion_notify_event',self.onHilite)
-            ## delete the artists that are clicked on
-            #self.mpl_disconnect(self.button_pick_id)
-            #self.mpl_connect('button_press_event',self.onRemove)
+    @contextmanager
+    def _idle_draw_cntx(self):
+        self._is_idle_drawing = True
+        yield
+        self._is_idle_drawing = False
+
+    def is_saving(self):
+        """
+        Returns `True` when the renderer is in the process of saving
+        to a file, rather than rendering for an on-screen buffer.
+        """
+        return self._is_saving
 
     def onRemove(self, ev):
         """
@@ -1448,22 +1715,16 @@ class FigureCanvasBase(object):
 
             canvas.mpl_connect('mouse_press_event',canvas.onRemove)
         """
-        def sort_artists(artists):
-            # This depends on stable sort and artists returned
-            # from get_children in z order.
-            L = [ (h.zorder, h) for h in artists ]
-            L.sort()
-            return [ h for zorder, h in L ]
-
         # Find the top artist under the cursor
-        under = sort_artists(self.figure.hitlist(ev))
+        under = self.figure.hitlist(ev)
+        under.sort(key=lambda x: x.zorder)
         h = None
-        if under: h = under[-1]
+        if under:
+            h = under[-1]
 
         # Try deleting that artist, or its parent if you
         # can't delete the artist
         while h:
-            print "Removing",h
             if h.remove():
                 self.draw_idle()
                 break
@@ -1482,19 +1743,21 @@ class FigureCanvasBase(object):
 
             canvas.mpl_connect('motion_notify_event',canvas.onHilite)
         """
-        if not hasattr(self,'_active'): self._active = dict()
+        msg = ("onHilite has been deprecated in 1.5 and will be removed "
+               "in 1.6.  This function has not been used internally by mpl "
+               "since 2007.")
+        warnings.warn(msg, mplDeprecation)
+        if not hasattr(self, '_active'):
+            self._active = dict()
 
         under = self.figure.hitlist(ev)
         enter = [a for a in under if a not in self._active]
         leave = [a for a in self._active if a not in under]
-        #print "within:"," ".join([str(x) for x in under])
-        #print "entering:",[str(a) for a in enter]
-        #print "leaving:",[str(a) for a in leave]
         # On leave restore the captured colour
         for a in leave:
-            if hasattr(a,'get_color'):
+            if hasattr(a, 'get_color'):
                 a.set_color(self._active[a])
-            elif hasattr(a,'get_edgecolor'):
+            elif hasattr(a, 'get_edgecolor'):
                 a.set_edgecolor(self._active[a][0])
                 a.set_facecolor(self._active[a][1])
             del self._active[a]
@@ -1503,18 +1766,20 @@ class FigureCanvasBase(object):
         # be done first in case the parent recolouring affects
         # the child.
         for a in enter:
-            if hasattr(a,'get_color'):
+            if hasattr(a, 'get_color'):
                 self._active[a] = a.get_color()
-            elif hasattr(a,'get_edgecolor'):
-                self._active[a] = (a.get_edgecolor(),a.get_facecolor())
-            else: self._active[a] = None
+            elif hasattr(a, 'get_edgecolor'):
+                self._active[a] = (a.get_edgecolor(), a.get_facecolor())
+            else:
+                self._active[a] = None
         for a in enter:
-            if hasattr(a,'get_color'):
+            if hasattr(a, 'get_color'):
                 a.set_color('red')
-            elif hasattr(a,'get_edgecolor'):
+            elif hasattr(a, 'get_edgecolor'):
                 a.set_edgecolor('red')
                 a.set_facecolor('lightblue')
-            else: self._active[a] = None
+            else:
+                self._active[a] = None
         self.draw_idle()
 
     def pick(self, mouseevent):
@@ -1562,11 +1827,13 @@ class FigureCanvasBase(object):
         try:
             event = CloseEvent(s, self, guiEvent=guiEvent)
             self.callbacks.process(s, event)
-        except TypeError:
+        except (TypeError, AttributeError):
             pass
             # Suppress the TypeError when the python session is being killed.
             # It may be that a better solution would be a mechanism to
             # disconnect all callbacks upon shutdown.
+            # AttributeError occurs on OSX with qt4agg upon exiting
+            # with an open window; 'callbacks' attribute no longer exists.
 
     def key_press_event(self, key, guiEvent=None):
         """
@@ -1575,7 +1842,8 @@ class FigureCanvasBase(object):
         """
         self._key = key
         s = 'key_press_event'
-        event = KeyEvent(s, self, key, self._lastx, self._lasty, guiEvent=guiEvent)
+        event = KeyEvent(
+            s, self, key, self._lastx, self._lasty, guiEvent=guiEvent)
         self.callbacks.process(s, event)
 
     def key_release_event(self, key, guiEvent=None):
@@ -1584,7 +1852,8 @@ class FigureCanvasBase(object):
         'key_release_event' with a :class:`KeyEvent`
         """
         s = 'key_release_event'
-        event = KeyEvent(s, self, key, self._lastx, self._lasty, guiEvent=guiEvent)
+        event = KeyEvent(
+            s, self, key, self._lastx, self._lasty, guiEvent=guiEvent)
         self.callbacks.process(s, event)
         self._key = None
 
@@ -1594,7 +1863,9 @@ class FigureCanvasBase(object):
         fire off :class:`PickEvent` callbacks registered listeners
         """
         s = 'pick_event'
-        event = PickEvent(s, self, mouseevent, artist, **kwargs)
+        event = PickEvent(s, self, mouseevent, artist,
+                          guiEvent=mouseevent.guiEvent,
+                          **kwargs)
         self.callbacks.process(s, event)
 
     def scroll_event(self, x, y, step, guiEvent=None):
@@ -1615,8 +1886,7 @@ class FigureCanvasBase(object):
                                 step=step, guiEvent=guiEvent)
         self.callbacks.process(s, mouseevent)
 
-
-    def button_press_event(self, x, y, button, guiEvent=None):
+    def button_press_event(self, x, y, button, dblclick=False, guiEvent=None):
         """
         Backend derived classes should call this function on any mouse
         button press.  x,y are the canvas coords: 0,0 is lower, left.
@@ -1628,7 +1898,8 @@ class FigureCanvasBase(object):
         """
         self._button = button
         s = 'button_press_event'
-        mouseevent = MouseEvent(s, self, x, y, button, self._key, guiEvent=guiEvent)
+        mouseevent = MouseEvent(s, self, x, y, button, self._key,
+                                dblclick=dblclick, guiEvent=guiEvent)
         self.callbacks.process(s, mouseevent)
 
     def button_release_event(self, x, y, button, guiEvent=None):
@@ -1689,23 +1960,32 @@ class FigureCanvasBase(object):
             the native UI event that generated the mpl event
 
         """
+
         self.callbacks.process('figure_leave_event', LocationEvent.lastevent)
         LocationEvent.lastevent = None
+        self._lastx, self._lasty = None, None
 
-    def enter_notify_event(self, guiEvent=None):
+    def enter_notify_event(self, guiEvent=None, xy=None):
         """
         Backend derived classes should call this function when entering
         canvas
 
         *guiEvent*
             the native UI event that generated the mpl event
+        *xy*
+            the coordinate location of the pointer when the canvas is
+            entered
 
         """
+        if xy is not None:
+            x, y = xy
+            self._lastx, self._lasty = x, y
+
         event = Event('figure_enter_event', self, guiEvent)
         self.callbacks.process('figure_enter_event', event)
 
     def idle_event(self, guiEvent=None):
-        'call when GUI is idle'
+        """Called when GUI is idle."""
         s = 'idle_event'
         event = IdleEvent(s, self, guiEvent=guiEvent)
         self.callbacks.process(s, event)
@@ -1725,7 +2005,8 @@ class FigureCanvasBase(object):
         """
         Release the mouse grab held by the axes, ax.
         Usually called by the widgets.
-        It is ok to call this even if you ax doesn't have the mouse grab currently.
+        It is ok to call this even if you ax doesn't have the mouse
+        grab currently.
         """
         if self.mouse_grabber is ax:
             self.mouse_grabber = None
@@ -1740,7 +2021,9 @@ class FigureCanvasBase(object):
         """
         :meth:`draw` only if idle; defaults to draw but backends can overrride
         """
-        self.draw(*args, **kwargs)
+        if not self._is_idle_drawing:
+            with self._idle_draw_cntx():
+                self.draw(*args, **kwargs)
 
     def draw_cursor(self, event):
         """
@@ -1751,143 +2034,49 @@ class FigureCanvasBase(object):
 
     def get_width_height(self):
         """
-        return the figure width and height in points or pixels
+        Return the figure width and height in points or pixels
         (depending on the backend), truncated to integers
         """
         return int(self.figure.bbox.width), int(self.figure.bbox.height)
 
-    filetypes = {
-        'emf': 'Enhanced Metafile',
-        'eps': 'Encapsulated Postscript',
-        'pdf': 'Portable Document Format',
-        'png': 'Portable Network Graphics',
-        'ps' : 'Postscript',
-        'raw': 'Raw RGBA bitmap',
-        'rgba': 'Raw RGBA bitmap',
-        'svg': 'Scalable Vector Graphics',
-        'svgz': 'Scalable Vector Graphics'
-        }
+    @classmethod
+    def get_supported_filetypes(cls):
+        """Return dict of savefig file formats supported by this backend"""
+        return cls.filetypes
 
-    # All of these print_* functions do a lazy import because
-    #  a) otherwise we'd have cyclical imports, since all of these
-    #     classes inherit from FigureCanvasBase
-    #  b) so we don't import a bunch of stuff the user may never use
-
-    def print_emf(self, *args, **kwargs):
-        from backends.backend_emf import FigureCanvasEMF # lazy import
-        emf = self.switch_backends(FigureCanvasEMF)
-        return emf.print_emf(*args, **kwargs)
-
-    def print_eps(self, *args, **kwargs):
-        from backends.backend_ps import FigureCanvasPS # lazy import
-        ps = self.switch_backends(FigureCanvasPS)
-        return ps.print_eps(*args, **kwargs)
-
-    def print_pdf(self, *args, **kwargs):
-        from backends.backend_pdf import FigureCanvasPdf # lazy import
-        pdf = self.switch_backends(FigureCanvasPdf)
-        return pdf.print_pdf(*args, **kwargs)
-
-    def print_png(self, *args, **kwargs):
-        from backends.backend_agg import FigureCanvasAgg # lazy import
-        agg = self.switch_backends(FigureCanvasAgg)
-        return agg.print_png(*args, **kwargs)
-
-    def print_ps(self, *args, **kwargs):
-        from backends.backend_ps import FigureCanvasPS # lazy import
-        ps = self.switch_backends(FigureCanvasPS)
-        return ps.print_ps(*args, **kwargs)
-
-    def print_raw(self, *args, **kwargs):
-        from backends.backend_agg import FigureCanvasAgg # lazy import
-        agg = self.switch_backends(FigureCanvasAgg)
-        return agg.print_raw(*args, **kwargs)
-    print_bmp = print_rgb = print_raw
-
-    def print_svg(self, *args, **kwargs):
-        from backends.backend_svg import FigureCanvasSVG # lazy import
-        svg = self.switch_backends(FigureCanvasSVG)
-        return svg.print_svg(*args, **kwargs)
-
-    def print_svgz(self, *args, **kwargs):
-        from backends.backend_svg import FigureCanvasSVG # lazy import
-        svg = self.switch_backends(FigureCanvasSVG)
-        return svg.print_svgz(*args, **kwargs)
-
-    if _has_pil:
-        filetypes['jpg'] = filetypes['jpeg'] = 'Joint Photographic Experts Group'
-        def print_jpg(self, filename_or_obj, *args, **kwargs):
-            """
-            Supported kwargs:
-
-            *quality*: The image quality, on a scale from 1 (worst) to
-                95 (best). The default is 75. Values above 95 should
-                be avoided; 100 completely disables the JPEG
-                quantization stage.
-
-            *optimize*: If present, indicates that the encoder should
-                make an extra pass over the image in order to select
-                optimal encoder settings.
-
-            *progressive*: If present, indicates that this image
-                should be stored as a progressive JPEG file.
-            """
-            from backends.backend_agg import FigureCanvasAgg # lazy import
-            agg = self.switch_backends(FigureCanvasAgg)
-            buf, size = agg.print_to_buffer()
-            if kwargs.pop("dryrun", False): return
-            image = Image.frombuffer('RGBA', size, buf, 'raw', 'RGBA', 0, 1)
-            options = cbook.restrict_dict(kwargs, ['quality', 'optimize',
-                                                   'progressive'])
-            return image.save(filename_or_obj, **options)
-        print_jpeg = print_jpg
-
-        filetypes['tif'] = filetypes['tiff'] = 'Tagged Image File Format'
-        def print_tif(self, filename_or_obj, *args, **kwargs):
-            from backends.backend_agg import FigureCanvasAgg # lazy import
-            agg = self.switch_backends(FigureCanvasAgg)
-            buf, size = agg.print_to_buffer()
-            if kwargs.pop("dryrun", False): return
-            image = Image.frombuffer('RGBA', size, buf, 'raw', 'RGBA', 0, 1)
-            return image.save(filename_or_obj)
-        print_tiff = print_tif
-
-    def get_supported_filetypes(self):
-        return self.filetypes
-
-    def get_supported_filetypes_grouped(self):
+    @classmethod
+    def get_supported_filetypes_grouped(cls):
+        """Return a dict of savefig file formats supported by this backend,
+        where the keys are a file type name, such as 'Joint Photographic
+        Experts Group', and the values are a list of filename extensions used
+        for that filetype, such as ['jpg', 'jpeg']."""
         groupings = {}
-        for ext, name in self.filetypes.items():
+        for ext, name in six.iteritems(cls.filetypes):
             groupings.setdefault(name, []).append(ext)
             groupings[name].sort()
         return groupings
 
-
-    def _get_print_method(self, format):
+    def _get_output_canvas(self, format):
+        """Return a canvas that is suitable for saving figures to a specified
+        file format. If necessary, this function will switch to a registered
+        backend that supports the format.
+        """
         method_name = 'print_%s' % format
 
-        # check for registered backends
-        if format in _backend_d:
-            backend_class = _backend_d[format]
+        # check if this canvas supports the requested format
+        if hasattr(self, method_name):
+            return self
 
-            def _print_method(*args, **kwargs):
-                backend = self.switch_backends(backend_class)
-                print_method = getattr(backend, method_name)
-                return print_method(*args, **kwargs)
+        # check if there is a default canvas for the requested format
+        canvas_class = get_registered_canvas_class(format)
+        if canvas_class:
+            return self.switch_backends(canvas_class)
 
-            return _print_method
-
-        if (format not in self.filetypes or
-            not hasattr(self, method_name)):
-            formats = self.filetypes.keys()
-            formats.sort()
-            raise ValueError(
-                'Format "%s" is not supported.\n'
-                'Supported formats: '
-                '%s.' % (format, ', '.join(formats)))
-
-        return getattr(self, method_name)
-
+        # else report error for unsupported format
+        formats = sorted(self.get_supported_filetypes())
+        raise ValueError('Format "%s" is not supported.\n'
+                         'Supported formats: '
+                         '%s.' % (format, ', '.join(formats)))
 
     def print_figure(self, filename, dpi=None, facecolor='w', edgecolor='w',
                      orientation='portrait', format=None, **kwargs):
@@ -1920,22 +2109,24 @@ class FigureCanvasBase(object):
         *format*
             when set, forcibly set the file format to save to
 
-
         *bbox_inches*
             Bbox in inches. Only the given portion of the figure is
             saved. If 'tight', try to figure out the tight bbox of
-            the figure.
+            the figure. If None, use savefig.bbox
 
         *pad_inches*
             Amount of padding around the figure when bbox_inches is
-            'tight'.
+            'tight'. If None, use savefig.pad_inches
 
         *bbox_extra_artists*
             A list of extra artists that will be considered when the
             tight bbox is calculated.
 
         """
+        self._is_saving = True
+
         if format is None:
+            # get format from filename, or from backend's default filetype
             if cbook.is_string_like(filename):
                 format = os.path.splitext(filename)[1][1:]
             if format is None or format == '':
@@ -1944,7 +2135,9 @@ class FigureCanvasBase(object):
                     filename = filename.rstrip('.') + '.' + format
         format = format.lower()
 
-        print_method = self._get_print_method(format)
+        # get canvas object and print method for format
+        canvas = self._get_output_canvas(format)
+        print_method = getattr(canvas, 'print_%s' % format)
 
         if dpi is None:
             dpi = rcParams['savefig.dpi']
@@ -1958,6 +2151,8 @@ class FigureCanvasBase(object):
         self.figure.set_edgecolor(edgecolor)
 
         bbox_inches = kwargs.pop("bbox_inches", None)
+        if bbox_inches is None:
+            bbox_inches = rcParams['savefig.bbox']
 
         if bbox_inches:
             # call adjust_bbox to save only the given area
@@ -1972,9 +2167,9 @@ class FigureCanvasBase(object):
                 # the backend to support file-like object, i'm going
                 # to leave it as it is. However, a better solution
                 # than stringIO seems to be needed. -JJL
-                #result = getattr(self, method_name)(
+                #result = getattr(self, method_name)
                 result = print_method(
-                    cStringIO.StringIO(),
+                    io.BytesIO(),
                     dpi=dpi,
                     facecolor=facecolor,
                     edgecolor=edgecolor,
@@ -1984,26 +2179,40 @@ class FigureCanvasBase(object):
                 renderer = self.figure._cachedRenderer
                 bbox_inches = self.figure.get_tightbbox(renderer)
 
-                bbox_extra_artists = kwargs.pop("bbox_extra_artists", None)
-                if bbox_extra_artists is None:
-                    bbox_extra_artists = self.figure.get_default_bbox_extra_artists()
+                bbox_artists = kwargs.pop("bbox_extra_artists", None)
+                if bbox_artists is None:
+                    bbox_artists = self.figure.get_default_bbox_extra_artists()
 
-                bb = [a.get_window_extent(renderer) for a in bbox_extra_artists]
-                
-                if bb:
-                    _bbox = Bbox.union([b for b in bb if b.width!=0 or b.height!=0])
+                bbox_filtered = []
+                for a in bbox_artists:
+                    bbox = a.get_window_extent(renderer)
+                    if a.get_clip_on():
+                        clip_box = a.get_clip_box()
+                        if clip_box is not None:
+                            bbox = Bbox.intersection(bbox, clip_box)
+                        clip_path = a.get_clip_path()
+                        if clip_path is not None and bbox is not None:
+                            clip_path = clip_path.get_fully_transformed_path()
+                            bbox = Bbox.intersection(bbox,
+                                                     clip_path.get_extents())
+                    if bbox is not None and (bbox.width != 0 or
+                                             bbox.height != 0):
+                        bbox_filtered.append(bbox)
 
-                    bbox_inches1 = TransformedBbox(_bbox,
-                                                  Affine2D().scale(1./self.figure.dpi))
+                if bbox_filtered:
+                    _bbox = Bbox.union(bbox_filtered)
+                    trans = Affine2D().scale(1.0 / self.figure.dpi)
+                    bbox_extra = TransformedBbox(_bbox, trans)
+                    bbox_inches = Bbox.union([bbox_inches, bbox_extra])
 
-                    bbox_inches = Bbox.union([bbox_inches, bbox_inches1])
+                pad = kwargs.pop("pad_inches", None)
+                if pad is None:
+                    pad = rcParams['savefig.pad_inches']
 
-
-                pad = kwargs.pop("pad_inches", 0.1)
                 bbox_inches = bbox_inches.padded(pad)
 
-            restore_bbox = tight_bbox.adjust_bbox(self.figure, format,
-                                                  bbox_inches)
+            restore_bbox = tight_bbox.adjust_bbox(self.figure, bbox_inches,
+                                                  canvas.fixed_dpi)
 
             _bbox_inches_restore = (bbox_inches, restore_bbox)
         else:
@@ -2027,33 +2236,67 @@ class FigureCanvasBase(object):
             self.figure.set_facecolor(origfacecolor)
             self.figure.set_edgecolor(origedgecolor)
             self.figure.set_canvas(self)
+            self._is_saving = False
             #self.figure.canvas.draw() ## seems superfluous
         return result
 
+    @classmethod
+    def get_default_filetype(cls):
+        """
+        Get the default savefig file format as specified in rcParam
+        ``savefig.format``. Returned string excludes period. Overridden
+        in backends that only support a single file type.
+        """
+        return rcParams['savefig.format']
 
-
-
-    def get_default_filetype(self):
-        raise NotImplementedError
+    def get_window_title(self):
+        """
+        Get the title text of the window containing the figure.
+        Return None if there is no window (e.g., a PS backend).
+        """
+        if hasattr(self, "manager"):
+            return self.manager.get_window_title()
 
     def set_window_title(self, title):
         """
         Set the title text of the window containing the figure.  Note that
-        this has no effect if there is no window (eg, a PS backend).
+        this has no effect if there is no window (e.g., a PS backend).
         """
         if hasattr(self, "manager"):
             self.manager.set_window_title(title)
 
+    def get_default_filename(self):
+        """
+        Return a string, which includes extension, suitable for use as
+        a default filename.
+        """
+        default_basename = self.get_window_title() or 'image'
+        default_basename = default_basename.lower().replace(' ', '_')
+        default_filetype = self.get_default_filetype()
+        default_filename = default_basename + '.' + default_filetype
+
+        save_dir = os.path.expanduser(rcParams.get('savefig.directory', ''))
+
+        # ensure non-existing filename in save dir
+        i = 1
+        while os.path.isfile(os.path.join(save_dir, default_filename)):
+            # attach numerical count to basename
+            default_filename = '{0}-{1}.{2}'.format(default_basename, i, default_filetype)
+            i += 1
+
+        return default_filename
+
     def switch_backends(self, FigureCanvasClass):
         """
-        instantiate an instance of FigureCanvasClass
+        Instantiate an instance of FigureCanvasClass
 
-        This is used for backend switching, eg, to instantiate a
+        This is used for backend switching, e.g., to instantiate a
         FigureCanvasPS from a FigureCanvasGTK.  Note, deep copying is
-        not done, so any changes to one of the instances (eg, setting
+        not done, so any changes to one of the instances (e.g., setting
         figure size or line props), will be reflected in the other
         """
         newCanvas = FigureCanvasClass(self.figure)
+        newCanvas._is_saving = self._is_saving
         return newCanvas
 
     def mpl_connect(self, s, func):
@@ -2095,17 +2338,22 @@ class FigureCanvasBase(object):
         Example usage::
 
             def on_press(event):
-                print 'you pressed', event.button, event.xdata, event.ydata
+                print('you pressed', event.button, event.xdata, event.ydata)
 
             cid = canvas.mpl_connect('button_press_event', on_press)
 
         """
+        if s == 'idle_event':
+            warn_deprecated(1.5,
+                "idle_event is only implemented for the wx backend, and will "
+                "be removed in matplotlib 2.1. Use the animations module "
+                "instead.")
 
         return self.callbacks.connect(s, func)
 
     def mpl_disconnect(self, cid):
         """
-        disconnect callback id cid
+        Disconnect callback id cid
 
         Example usage::
 
@@ -2117,9 +2365,10 @@ class FigureCanvasBase(object):
 
     def new_timer(self, *args, **kwargs):
         """
-        Creates a new backend-specific subclass of :class:`backend_bases.Timer`.
-        This is useful for getting periodic events through the backend's native
-        event loop. Implemented only for backends with GUIs.
+        Creates a new backend-specific subclass of
+        :class:`backend_bases.Timer`. This is useful for getting periodic
+        events through the backend's native event loop. Implemented only for
+        backends with GUIs.
 
         optional arguments:
 
@@ -2138,7 +2387,7 @@ class FigureCanvasBase(object):
         """
         raise NotImplementedError
 
-    def start_event_loop(self,timeout):
+    def start_event_loop(self, timeout):
         """
         Start an event loop.  This is used to start a blocking event
         loop so that interactive functions, such as ginput and
@@ -2160,7 +2409,7 @@ class FigureCanvasBase(object):
         """
         raise NotImplementedError
 
-    def start_event_loop_default(self,timeout=0):
+    def start_event_loop_default(self, timeout=0):
         """
         Start an event loop.  This is used to start a blocking event
         loop so that interactive functions, such as ginput and
@@ -2183,13 +2432,14 @@ class FigureCanvasBase(object):
         """
         str = "Using default event loop until function specific"
         str += " to this GUI is implemented"
-        warnings.warn(str,DeprecationWarning)
+        warnings.warn(str, mplDeprecation)
 
-        if timeout <= 0: timeout = np.inf
+        if timeout <= 0:
+            timeout = np.inf
         timestep = 0.01
         counter = 0
         self._looping = True
-        while self._looping and counter*timestep < timeout:
+        while self._looping and counter * timestep < timeout:
             self.flush_events()
             time.sleep(timestep)
             counter += 1
@@ -2207,8 +2457,124 @@ class FigureCanvasBase(object):
         self._looping = False
 
 
+def key_press_handler(event, canvas, toolbar=None):
+    """
+    Implement the default mpl key bindings for the canvas and toolbar
+    described at :ref:`key-event-handling`
 
-class FigureManagerBase:
+    *event*
+      a :class:`KeyEvent` instance
+    *canvas*
+      a :class:`FigureCanvasBase` instance
+    *toolbar*
+      a :class:`NavigationToolbar2` instance
+
+    """
+    # these bindings happen whether you are over an axes or not
+
+    if event.key is None:
+        return
+
+    # Load key-mappings from your matplotlibrc file.
+    fullscreen_keys = rcParams['keymap.fullscreen']
+    home_keys = rcParams['keymap.home']
+    back_keys = rcParams['keymap.back']
+    forward_keys = rcParams['keymap.forward']
+    pan_keys = rcParams['keymap.pan']
+    zoom_keys = rcParams['keymap.zoom']
+    save_keys = rcParams['keymap.save']
+    quit_keys = rcParams['keymap.quit']
+    grid_keys = rcParams['keymap.grid']
+    toggle_yscale_keys = rcParams['keymap.yscale']
+    toggle_xscale_keys = rcParams['keymap.xscale']
+    all = rcParams['keymap.all_axes']
+
+    # toggle fullscreen mode (default key 'f')
+    if event.key in fullscreen_keys:
+        try:
+            canvas.manager.full_screen_toggle()
+        except AttributeError:
+            pass
+
+    # quit the figure (defaut key 'ctrl+w')
+    if event.key in quit_keys:
+        Gcf.destroy_fig(canvas.figure)
+
+    if toolbar is not None:
+        # home or reset mnemonic  (default key 'h', 'home' and 'r')
+        if event.key in home_keys:
+            toolbar.home()
+        # forward / backward keys to enable left handed quick navigation
+        # (default key for backward: 'left', 'backspace' and 'c')
+        elif event.key in back_keys:
+            toolbar.back()
+        # (default key for forward: 'right' and 'v')
+        elif event.key in forward_keys:
+            toolbar.forward()
+        # pan mnemonic (default key 'p')
+        elif event.key in pan_keys:
+            toolbar.pan()
+            toolbar._set_cursor(event)
+        # zoom mnemonic (default key 'o')
+        elif event.key in zoom_keys:
+            toolbar.zoom()
+            toolbar._set_cursor(event)
+        # saving current figure (default key 's')
+        elif event.key in save_keys:
+            toolbar.save_figure()
+
+    if event.inaxes is None:
+        return
+
+    # these bindings require the mouse to be over an axes to trigger
+
+    # switching on/off a grid in current axes (default key 'g')
+    if event.key in grid_keys:
+        event.inaxes.grid()
+        canvas.draw()
+    # toggle scaling of y-axes between 'log and 'linear' (default key 'l')
+    elif event.key in toggle_yscale_keys:
+        ax = event.inaxes
+        scale = ax.get_yscale()
+        if scale == 'log':
+            ax.set_yscale('linear')
+            ax.figure.canvas.draw()
+        elif scale == 'linear':
+            ax.set_yscale('log')
+            ax.figure.canvas.draw()
+    # toggle scaling of x-axes between 'log and 'linear' (default key 'k')
+    elif event.key in toggle_xscale_keys:
+        ax = event.inaxes
+        scalex = ax.get_xscale()
+        if scalex == 'log':
+            ax.set_xscale('linear')
+            ax.figure.canvas.draw()
+        elif scalex == 'linear':
+            ax.set_xscale('log')
+            ax.figure.canvas.draw()
+
+    elif (event.key.isdigit() and event.key != '0') or event.key in all:
+        # keys in list 'all' enables all axes (default key 'a'),
+        # otherwise if key is a number only enable this particular axes
+        # if it was the axes, where the event was raised
+        if not (event.key in all):
+            n = int(event.key) - 1
+        for i, a in enumerate(canvas.figure.get_axes()):
+            # consider axes, in which the event was raised
+            # FIXME: Why only this axes?
+            if event.x is not None and event.y is not None \
+                    and a.in_axes(event):
+                if event.key in all:
+                    a.set_navigate(True)
+                else:
+                    a.set_navigate(i == n)
+
+
+class NonGuiException(Exception):
+    pass
+
+
+class FigureManagerBase(object):
     """
     Helper class for pyplot mode, wraps everything up into a neat bundle
 
@@ -2218,117 +2584,56 @@ class FigureManagerBase:
         A :class:`FigureCanvasBase` instance
 
     *num*
-        The figure nuamber
+        The figure number
     """
     def __init__(self, canvas, num):
         self.canvas = canvas
         canvas.manager = self  # store a pointer to parent
         self.num = num
 
-        self.canvas.mpl_connect('key_press_event', self.key_press)
+        if rcParams['toolbar'] != 'toolmanager':
+            self.key_press_handler_id = self.canvas.mpl_connect(
+                                                'key_press_event',
+                                                self.key_press)
+        else:
+            self.key_press_handler_id = None
+        """
+        The returned id from connecting the default key handler via
+        :meth:`FigureCanvasBase.mpl_connnect`.
+
+        To disable default key press handling::
+
+            manager, canvas = figure.canvas.manager, figure.canvas
+            canvas.mpl_disconnect(manager.key_press_handler_id)
+
+        """
+
+    def show(self):
+        """
+        For GUI backends, show the figure window and redraw.
+        For non-GUI backends, raise an exception to be caught
+        by :meth:`~matplotlib.figure.Figure.show`, for an
+        optional warning.
+        """
+        raise NonGuiException()
 
     def destroy(self):
         pass
 
-    def full_screen_toggle (self):
+    def full_screen_toggle(self):
         pass
 
     def resize(self, w, h):
-        'For gui backends: resize window in pixels'
+        """"For gui backends, resize the window (in pixels)."""
         pass
 
     def key_press(self, event):
-
-        # these bindings happen whether you are over an axes or not
-        #if event.key == 'q':
-        #    self.destroy() # how cruel to have to destroy oneself!
-        #    return
-
-        if event.key is None:
-            return
-
-        # Load key-mappings from your matplotlibrc file.
-        fullscreen_keys = rcParams['keymap.fullscreen']
-        home_keys = rcParams['keymap.home']
-        back_keys = rcParams['keymap.back']
-        forward_keys = rcParams['keymap.forward']
-        pan_keys = rcParams['keymap.pan']
-        zoom_keys = rcParams['keymap.zoom']
-        save_keys = rcParams['keymap.save']
-        grid_keys = rcParams['keymap.grid']
-        toggle_yscale_keys = rcParams['keymap.yscale']
-        toggle_xscale_keys = rcParams['keymap.xscale']
-        all = rcParams['keymap.all_axes']
-
-        # toggle fullscreen mode (default key 'f')
-        if event.key in fullscreen_keys:
-            self.full_screen_toggle()
-
-        # home or reset mnemonic  (default key 'h', 'home' and 'r')
-        elif event.key in home_keys:
-            self.canvas.toolbar.home()
-        # forward / backward keys to enable left handed quick navigation
-        # (default key for backward: 'left', 'backspace' and 'c')
-        elif event.key in back_keys:
-            self.canvas.toolbar.back()
-        # (default key for forward: 'right' and 'v')
-        elif event.key in forward_keys:
-            self.canvas.toolbar.forward()
-        # pan mnemonic (default key 'p')
-        elif event.key in pan_keys:
-            self.canvas.toolbar.pan()
-        # zoom mnemonic (default key 'o')
-        elif event.key in zoom_keys:
-            self.canvas.toolbar.zoom()
-        # saving current figure (default key 's')
-        elif event.key in save_keys:
-            self.canvas.toolbar.save_figure()
-
-        if event.inaxes is None:
-            return
-
-        # the mouse has to be over an axes to trigger these
-        # switching on/off a grid in current axes (default key 'g')
-        if event.key in grid_keys:
-            event.inaxes.grid()
-            self.canvas.draw()
-        # toggle scaling of y-axes between 'log and 'linear' (default key 'l')
-        elif event.key in toggle_yscale_keys:
-            ax = event.inaxes
-            scale = ax.get_yscale()
-            if scale == 'log':
-                ax.set_yscale('linear')
-                ax.figure.canvas.draw()
-            elif scale == 'linear':
-                ax.set_yscale('log')
-                ax.figure.canvas.draw()
-        # toggle scaling of x-axes between 'log and 'linear' (default key 'k')
-        elif event.key in toggle_xscale_keys:
-            ax = event.inaxes
-            scalex = ax.get_xscale()
-            if scalex == 'log':
-                ax.set_xscale('linear')
-                ax.figure.canvas.draw()
-            elif scalex == 'linear':
-                ax.set_xscale('log')
-                ax.figure.canvas.draw()
-
-        elif (event.key.isdigit() and event.key!='0') or event.key in all:
-            # keys in list 'all' enables all axes (default key 'a'),
-            # otherwise if key is a number only enable this particular axes
-            # if it was the axes, where the event was raised
-            if not (event.key in all):
-                n = int(event.key)-1
-            for i, a in enumerate(self.canvas.figure.get_axes()):
-                # consider axes, in which the event was raised
-                # FIXME: Why only this axes?
-                if event.x is not None and event.y is not None \
-                       and a.in_axes(event):
-                    if event.key in all:
-                        a.set_navigate(True)
-                    else:
-                        a.set_navigate(i==n)
-
+        """
+        Implement the default mpl key bindings defined at
+        :ref:`key-event-handling`
+        """
+        if rcParams['toolbar'] != 'toolmanager':
+            key_press_handler(event, self.canvas, self.canvas.toolbar)
 
     def show_popup(self, msg):
         """
@@ -2336,18 +2641,22 @@ class FigureManagerBase:
         """
         pass
 
+    def get_window_title(self):
+        """
+        Get the title text of the window containing the figure.
+        Return None for non-GUI backends (e.g., a PS backend).
+        """
+        return 'image'
+
     def set_window_title(self, title):
         """
         Set the title text of the window containing the figure.  Note that
-        this has no effect if there is no window (eg, a PS backend).
+        this has no effect for non-GUI backends (e.g., a PS backend).
         """
         pass
 
-# cursors
-class Cursors:  #namespace
-    HAND, POINTER, SELECT_REGION, MOVE = range(4)
-cursors = Cursors()
 
+cursors = tools.cursors
 
 
 class NavigationToolbar2(object):
@@ -2394,34 +2703,56 @@ class NavigationToolbar2(object):
     That's it, we'll do the rest!
     """
 
+    # list of toolitems to add to the toolbar, format is:
+    # (
+    #   text, # the text of the button (often not visible to users)
+    #   tooltip_text, # the tooltip shown on hover (where possible)
+    #   image_file, # name of the image for the button (without the extension)
+    #   name_of_method, # name of the method in NavigationToolbar2 to call
+    # )
+    toolitems = (
+        ('Home', 'Reset original view', 'home', 'home'),
+        ('Back', 'Back to  previous view', 'back', 'back'),
+        ('Forward', 'Forward to next view', 'forward', 'forward'),
+        (None, None, None, None),
+        ('Pan', 'Pan axes with left mouse, zoom with right', 'move', 'pan'),
+        ('Zoom', 'Zoom to rectangle', 'zoom_to_rect', 'zoom'),
+        (None, None, None, None),
+        ('Subplots', 'Configure subplots', 'subplots', 'configure_subplots'),
+        ('Save', 'Save the figure', 'filesave', 'save_figure'),
+      )
+
     def __init__(self, canvas):
         self.canvas = canvas
         canvas.toolbar = self
         # a dict from axes index to a list of view limits
         self._views = cbook.Stack()
         self._positions = cbook.Stack()  # stack of subplot positions
-        self._xypress = None  # the  location and axis info at the time of the press
+        self._xypress = None  # the location and axis info at the time
+                              # of the press
         self._idPress = None
         self._idRelease = None
         self._active = None
         self._lastCursor = None
         self._init_toolbar()
-        self._idDrag=self.canvas.mpl_connect('motion_notify_event', self.mouse_move)
+        self._idDrag = self.canvas.mpl_connect(
+            'motion_notify_event', self.mouse_move)
 
         self._ids_zoom = []
         self._zoom_mode = None
 
-        self._button_pressed = None # determined by the button pressed at start
+        self._button_pressed = None  # determined by the button pressed
+                                     # at start
 
         self.mode = ''  # a mode string for the status bar
         self.set_history_buttons()
 
     def set_message(self, s):
-        'display a message on toolbar or in status bar'
+        """Display a message on toolbar or in status bar"""
         pass
 
     def back(self, *args):
-        'move back up the view lim stack'
+        """move back up the view lim stack"""
         self._views.back()
         self._positions.back()
         self.set_history_buttons()
@@ -2431,18 +2762,22 @@ class NavigationToolbar2(object):
         pass
 
     def draw_rubberband(self, event, x0, y0, x1, y1):
-        'draw a rectangle rubberband to indicate zoom limits'
+        """Draw a rectangle rubberband to indicate zoom limits"""
+        pass
+
+    def remove_rubberband(self):
+        """Remove the rubberband"""
         pass
 
     def forward(self, *args):
-        'move forward in the view lim stack'
+        """Move forward in the view lim stack"""
         self._views.forward()
         self._positions.forward()
         self.set_history_buttons()
         self._update_view()
 
     def home(self, *args):
-        'restore the original view'
+        """Restore the original view"""
         self._views.home()
         self._positions.home()
         self.set_history_buttons()
@@ -2470,38 +2805,52 @@ class NavigationToolbar2(object):
         """
         raise NotImplementedError
 
-    def mouse_move(self, event):
-        #print 'mouse_move', event.button
-
+    def _set_cursor(self, event):
         if not event.inaxes or not self._active:
             if self._lastCursor != cursors.POINTER:
                 self.set_cursor(cursors.POINTER)
                 self._lastCursor = cursors.POINTER
         else:
-            if self._active=='ZOOM':
+            if self._active == 'ZOOM':
                 if self._lastCursor != cursors.SELECT_REGION:
                     self.set_cursor(cursors.SELECT_REGION)
                     self._lastCursor = cursors.SELECT_REGION
-            elif (self._active=='PAN' and
+            elif (self._active == 'PAN' and
                   self._lastCursor != cursors.MOVE):
                 self.set_cursor(cursors.MOVE)
 
                 self._lastCursor = cursors.MOVE
 
+    def mouse_move(self, event):
+        self._set_cursor(event)
+
         if event.inaxes and event.inaxes.get_navigate():
 
-            try: s = event.inaxes.format_coord(event.xdata, event.ydata)
-            except ValueError: pass
-            except OverflowError: pass
+            try:
+                s = event.inaxes.format_coord(event.xdata, event.ydata)
+            except (ValueError, OverflowError):
+                pass
             else:
+                artists = [a for a in event.inaxes.mouseover_set
+                           if a.contains(event)]
+
+                if artists:
+
+                    a = max(enumerate(artists), key=lambda x: x[1].zorder)[1]
+                    if a is not event.inaxes.patch:
+                        data = a.get_cursor_data(event)
+                        if data is not None:
+                            s += ' [%s]' % a.format_cursor_data(data)
+
                 if len(self.mode):
                     self.set_message('%s, %s' % (self.mode, s))
                 else:
                     self.set_message(s)
-        else: self.set_message(self.mode)
+        else:
+            self.set_message(self.mode)
 
-    def pan(self,*args):
-        'Activate the pan/zoom tool. pan with left button, zoom with right'
+    def pan(self, *args):
+        """Activate the pan/zoom tool. pan with left button, zoom with right"""
         # set the pointer icon and button press funcs to the
         # appropriate callbacks
 
@@ -2533,70 +2882,80 @@ class NavigationToolbar2(object):
         self.set_message(self.mode)
 
     def press(self, event):
-        'this will be called whenver a mouse button is pressed'
+        """Called whenver a mouse button is pressed."""
         pass
 
     def press_pan(self, event):
-        'the press mouse button in pan/zoom mode callback'
+        """the press mouse button in pan/zoom mode callback"""
 
         if event.button == 1:
-            self._button_pressed=1
-        elif  event.button == 3:
-            self._button_pressed=3
+            self._button_pressed = 1
+        elif event.button == 3:
+            self._button_pressed = 3
         else:
-            self._button_pressed=None
+            self._button_pressed = None
             return
 
         x, y = event.x, event.y
 
         # push the current view to define home if stack is empty
-        if self._views.empty(): self.push_current()
+        if self._views.empty():
+            self.push_current()
 
-        self._xypress=[]
+        self._xypress = []
         for i, a in enumerate(self.canvas.figure.get_axes()):
             if (x is not None and y is not None and a.in_axes(event) and
-                a.get_navigate() and a.can_pan()) :
+                    a.get_navigate() and a.can_pan()):
                 a.start_pan(x, y, event.button)
                 self._xypress.append((a, i))
                 self.canvas.mpl_disconnect(self._idDrag)
-                self._idDrag=self.canvas.mpl_connect('motion_notify_event',
-                                                     self.drag_pan)
+                self._idDrag = self.canvas.mpl_connect('motion_notify_event',
+                                                       self.drag_pan)
 
         self.press(event)
 
     def press_zoom(self, event):
-        'the press mouse button in zoom to rect mode callback'
+        """the press mouse button in zoom to rect mode callback"""
+        # If we're already in the middle of a zoom, pressing another
+        # button works to "cancel"
+        if self._ids_zoom != []:
+            for zoom_id in self._ids_zoom:
+                self.canvas.mpl_disconnect(zoom_id)
+            self.release(event)
+            self.draw()
+            self._xypress = None
+            self._button_pressed = None
+            self._ids_zoom = []
+            return
+
         if event.button == 1:
-            self._button_pressed=1
-        elif  event.button == 3:
-            self._button_pressed=3
+            self._button_pressed = 1
+        elif event.button == 3:
+            self._button_pressed = 3
         else:
-            self._button_pressed=None
+            self._button_pressed = None
             return
 
         x, y = event.x, event.y
 
         # push the current view to define home if stack is empty
-        if self._views.empty(): self.push_current()
+        if self._views.empty():
+            self.push_current()
 
-        self._xypress=[]
+        self._xypress = []
         for i, a in enumerate(self.canvas.figure.get_axes()):
             if (x is not None and y is not None and a.in_axes(event) and
-                a.get_navigate() and a.can_zoom()) :
-                self._xypress.append(( x, y, a, i, a.viewLim.frozen(),
-                                       a.transData.frozen() ))
+                    a.get_navigate() and a.can_zoom()):
+                self._xypress.append((x, y, a, i, a._get_view()))
 
         id1 = self.canvas.mpl_connect('motion_notify_event', self.drag_zoom)
-
         id2 = self.canvas.mpl_connect('key_press_event',
                                       self._switch_on_zoom_mode)
         id3 = self.canvas.mpl_connect('key_release_event',
                                       self._switch_off_zoom_mode)
 
         self._ids_zoom = id1, id2, id3
-
         self._zoom_mode = event.key
-
 
         self.press(event)
 
@@ -2609,42 +2968,43 @@ class NavigationToolbar2(object):
         self.mouse_move(event)
 
     def push_current(self):
-        'push the current view limits and position onto the stack'
-        lims = []; pos = []
+        """push the current view limits and position onto the stack"""
+        views = []
+        pos = []
         for a in self.canvas.figure.get_axes():
-            xmin, xmax = a.get_xlim()
-            ymin, ymax = a.get_ylim()
-            lims.append( (xmin, xmax, ymin, ymax) )
+            views.append(a._get_view())
             # Store both the original and modified positions
-            pos.append( (
-                    a.get_position(True).frozen(),
-                    a.get_position().frozen() ) )
-        self._views.push(lims)
+            pos.append((
+                a.get_position(True).frozen(),
+                a.get_position().frozen()))
+        self._views.push(views)
         self._positions.push(pos)
         self.set_history_buttons()
 
     def release(self, event):
-        'this will be called whenever mouse button is released'
+        """this will be called whenever mouse button is released"""
         pass
 
     def release_pan(self, event):
-        'the release mouse button callback in pan/zoom mode'
+        """the release mouse button callback in pan/zoom mode"""
 
         if self._button_pressed is None:
             return
         self.canvas.mpl_disconnect(self._idDrag)
-        self._idDrag=self.canvas.mpl_connect('motion_notify_event', self.mouse_move)
+        self._idDrag = self.canvas.mpl_connect(
+            'motion_notify_event', self.mouse_move)
         for a, ind in self._xypress:
             a.end_pan()
-        if not self._xypress: return
+        if not self._xypress:
+            return
         self._xypress = []
-        self._button_pressed=None
+        self._button_pressed = None
         self.push_current()
         self.release(event)
         self.draw()
 
     def drag_pan(self, event):
-        'the drag callback in pan/zoom mode'
+        """the drag callback in pan/zoom mode"""
 
         for a, ind in self._xypress:
             #safer to use the recorded button at the press than current button:
@@ -2653,11 +3013,11 @@ class NavigationToolbar2(object):
         self.dynamic_update()
 
     def drag_zoom(self, event):
-        'the drag callback in zoom mode'
+        """the drag callback in zoom mode"""
 
         if self._xypress:
             x, y = event.x, event.y
-            lastx, lasty, a, ind, lim, trans = self._xypress[0]
+            lastx, lasty, a, ind, view = self._xypress[0]
 
             # adjust x, last, y, last
             x1, y1, x2, y2 = a.bbox.extents
@@ -2673,106 +3033,51 @@ class NavigationToolbar2(object):
 
             self.draw_rubberband(event, x, y, lastx, lasty)
 
-
-
     def release_zoom(self, event):
-        'the release mouse button callback in zoom to rect mode'
+        """the release mouse button callback in zoom to rect mode"""
         for zoom_id in self._ids_zoom:
             self.canvas.mpl_disconnect(zoom_id)
         self._ids_zoom = []
 
-        if not self._xypress: return
+        self.remove_rubberband()
+
+        if not self._xypress:
+            return
 
         last_a = []
 
         for cur_xypress in self._xypress:
             x, y = event.x, event.y
-            lastx, lasty, a, ind, lim, trans = cur_xypress
+            lastx, lasty, a, ind, view = cur_xypress
             # ignore singular clicks - 5 pixels is a threshold
-            if abs(x-lastx)<5 or abs(y-lasty)<5:
+            # allows the user to "cancel" a zoom action
+            # by zooming by less than 5 pixels
+            if ((abs(x - lastx) < 5 and self._zoom_mode!="y") or
+                    (abs(y - lasty) < 5 and self._zoom_mode!="x")):
                 self._xypress = None
                 self.release(event)
                 self.draw()
                 return
 
-            x0, y0, x1, y1 = lim.extents
-
-            # zoom to rect
-            inverse = a.transData.inverted()
-            lastx, lasty = inverse.transform_point( (lastx, lasty) )
-            x, y = inverse.transform_point( (x, y) )
-            Xmin,Xmax=a.get_xlim()
-            Ymin,Ymax=a.get_ylim()
-
             # detect twinx,y axes and avoid double zooming
             twinx, twiny = False, False
             if last_a:
                 for la in last_a:
-                    if a.get_shared_x_axes().joined(a,la): twinx=True
-                    if a.get_shared_y_axes().joined(a,la): twiny=True
+                    if a.get_shared_x_axes().joined(a, la):
+                        twinx = True
+                    if a.get_shared_y_axes().joined(a, la):
+                        twiny = True
             last_a.append(a)
 
-            if twinx:
-                x0, x1 = Xmin, Xmax
-            else:
-                if Xmin < Xmax:
-                    if x<lastx:  x0, x1 = x, lastx
-                    else: x0, x1 = lastx, x
-                    if x0 < Xmin: x0=Xmin
-                    if x1 > Xmax: x1=Xmax
-                else:
-                    if x>lastx:  x0, x1 = x, lastx
-                    else: x0, x1 = lastx, x
-                    if x0 > Xmin: x0=Xmin
-                    if x1 < Xmax: x1=Xmax
-
-            if twiny:
-                y0, y1 = Ymin, Ymax
-            else:
-                if Ymin < Ymax:
-                    if y<lasty:  y0, y1 = y, lasty
-                    else: y0, y1 = lasty, y
-                    if y0 < Ymin: y0=Ymin
-                    if y1 > Ymax: y1=Ymax
-                else:
-                    if y>lasty:  y0, y1 = y, lasty
-                    else: y0, y1 = lasty, y
-                    if y0 > Ymin: y0=Ymin
-                    if y1 < Ymax: y1=Ymax
-
             if self._button_pressed == 1:
-                if self._zoom_mode == "x":
-                    a.set_xlim((x0, x1))
-                elif self._zoom_mode == "y":
-                    a.set_ylim((y0, y1))
-                else:
-                    a.set_xlim((x0, x1))
-                    a.set_ylim((y0, y1))
+                direction = 'in'
             elif self._button_pressed == 3:
-                if a.get_xscale()=='log':
-                    alpha=np.log(Xmax/Xmin)/np.log(x1/x0)
-                    rx1=pow(Xmin/x0,alpha)*Xmin
-                    rx2=pow(Xmax/x0,alpha)*Xmin
-                else:
-                    alpha=(Xmax-Xmin)/(x1-x0)
-                    rx1=alpha*(Xmin-x0)+Xmin
-                    rx2=alpha*(Xmax-x0)+Xmin
-                if a.get_yscale()=='log':
-                    alpha=np.log(Ymax/Ymin)/np.log(y1/y0)
-                    ry1=pow(Ymin/y0,alpha)*Ymin
-                    ry2=pow(Ymax/y0,alpha)*Ymin
-                else:
-                    alpha=(Ymax-Ymin)/(y1-y0)
-                    ry1=alpha*(Ymin-y0)+Ymin
-                    ry2=alpha*(Ymax-y0)+Ymin
+                direction = 'out'
+            else:
+                continue
 
-                if self._zoom_mode == "x":
-                    a.set_xlim((rx1, rx2))
-                elif self._zoom_mode == "y":
-                    a.set_ylim((ry1, ry2))
-                else:
-                    a.set_xlim((rx1, rx2))
-                    a.set_ylim((ry1, ry2))
+            a._set_view_from_bbox((lastx, lasty, x, y), direction,
+                                  self._zoom_mode, twinx, twiny)
 
         self.draw()
         self._xypress = None
@@ -2784,7 +3089,7 @@ class NavigationToolbar2(object):
         self.release(event)
 
     def draw(self):
-        'redraw the canvases, update the locators'
+        """Redraw the canvases, update the locators"""
         for a in self.canvas.figure.get_axes():
             xaxis = getattr(a, 'xaxis', None)
             yaxis = getattr(a, 'yaxis', None)
@@ -2798,32 +3103,29 @@ class NavigationToolbar2(object):
 
             for loc in locators:
                 loc.refresh()
-        self.canvas.draw()
-
-
+        self.canvas.draw_idle()
 
     def _update_view(self):
-        '''update the viewlim and position from the view and
+        """Update the viewlim and position from the view and
         position stack for each axes
-        '''
+        """
 
-        lims = self._views()
-        if lims is None:  return
+        views = self._views()
+        if views is None:
+            return
         pos = self._positions()
-        if pos is None: return
+        if pos is None:
+            return
         for i, a in enumerate(self.canvas.figure.get_axes()):
-            xmin, xmax, ymin, ymax = lims[i]
-            a.set_xlim((xmin, xmax))
-            a.set_ylim((ymin, ymax))
+            a._set_view(views[i])
             # Restore both the original and modified positions
-            a.set_position( pos[i][0], 'original' )
-            a.set_position( pos[i][1], 'active' )
+            a.set_position(pos[i][0], 'original')
+            a.set_position(pos[i][1], 'active')
 
-        self.draw()
-
+        self.canvas.draw_idle()
 
     def save_figure(self, *args):
-        'save the current figure'
+        """Save the current figure"""
         raise NotImplementedError
 
     def set_cursor(self, cursor):
@@ -2834,29 +3136,31 @@ class NavigationToolbar2(object):
         pass
 
     def update(self):
-        'reset the axes stack'
+        """Reset the axes stack"""
         self._views.clear()
         self._positions.clear()
         self.set_history_buttons()
 
     def zoom(self, *args):
-        'activate zoom to rect mode'
+        """Activate zoom to rect mode"""
         if self._active == 'ZOOM':
             self._active = None
         else:
             self._active = 'ZOOM'
 
         if self._idPress is not None:
-            self._idPress=self.canvas.mpl_disconnect(self._idPress)
+            self._idPress = self.canvas.mpl_disconnect(self._idPress)
             self.mode = ''
 
         if self._idRelease is not None:
-            self._idRelease=self.canvas.mpl_disconnect(self._idRelease)
+            self._idRelease = self.canvas.mpl_disconnect(self._idRelease)
             self.mode = ''
 
-        if  self._active:
-            self._idPress = self.canvas.mpl_connect('button_press_event', self.press_zoom)
-            self._idRelease = self.canvas.mpl_connect('button_release_event', self.release_zoom)
+        if self._active:
+            self._idPress = self.canvas.mpl_connect('button_press_event',
+                                                    self.press_zoom)
+            self._idRelease = self.canvas.mpl_connect('button_release_event',
+                                                      self.release_zoom)
             self.mode = 'zoom rect'
             self.canvas.widgetlock(self)
         else:
@@ -2867,7 +3171,164 @@ class NavigationToolbar2(object):
 
         self.set_message(self.mode)
 
-
     def set_history_buttons(self):
-        'enable or disable back/forward button'
+        """Enable or disable back/forward button"""
+        pass
+
+
+class ToolContainerBase(object):
+    """
+    Base class for all tool containers, e.g. toolbars.
+
+    Attributes
+    ----------
+    toolmanager : `ToolManager` object that holds the tools that
+        this `ToolContainer` wants to communicate with.
+    """
+
+    def __init__(self, toolmanager):
+        self.toolmanager = toolmanager
+        self.toolmanager.toolmanager_connect('tool_removed_event',
+                                             self._remove_tool_cbk)
+
+    def _tool_toggled_cbk(self, event):
+        """
+        Captures the 'tool_trigger_[name]'
+
+        This only gets used for toggled tools
+        """
+        self.toggle_toolitem(event.tool.name, event.tool.toggled)
+
+    def add_tool(self, tool, group, position=-1):
+        """
+        Adds a tool to this container
+
+        Parameters
+        ----------
+        tool : tool_like
+            The tool to add, see `ToolManager.get_tool`.
+        group : str
+            The name of the group to add this tool to.
+        position : int (optional)
+            The position within the group to place this tool.  Defaults to end.
+        """
+        tool = self.toolmanager.get_tool(tool)
+        image = self._get_image_filename(tool.image)
+        toggle = getattr(tool, 'toggled', None) is not None
+        self.add_toolitem(tool.name, group, position,
+                          image, tool.description, toggle)
+        if toggle:
+            self.toolmanager.toolmanager_connect('tool_trigger_%s' % tool.name,
+                                                 self._tool_toggled_cbk)
+
+    def _remove_tool_cbk(self, event):
+        """Captures the 'tool_removed_event' signal and removes the tool"""
+        self.remove_toolitem(event.tool.name)
+
+    def _get_image_filename(self, image):
+        """Find the image based on its name"""
+        # TODO: better search for images, they are not always in the
+        # datapath
+        basedir = os.path.join(rcParams['datapath'], 'images')
+        if image is not None:
+            fname = os.path.join(basedir, image)
+        else:
+            fname = None
+        return fname
+
+    def trigger_tool(self, name):
+        """
+        Trigger the tool
+
+        Parameters
+        ----------
+        name : String
+            Name(id) of the tool triggered from within the container
+
+        """
+        self.toolmanager.trigger_tool(name, sender=self)
+
+    def add_toolitem(self, name, group, position, image, description, toggle):
+        """
+        Add a toolitem to the container
+
+        This method must get implemented per backend
+
+        The callback associated with the button click event,
+        must be **EXACTLY** `self.trigger_tool(name)`
+
+        Parameters
+        ----------
+        name : string
+            Name of the tool to add, this gets used as the tool's ID and as the
+            default label of the buttons
+        group : String
+            Name of the group that this tool belongs to
+        position : Int
+            Position of the tool within its group, if -1 it goes at the End
+        image_file : String
+            Filename of the image for the button or `None`
+        description : String
+            Description of the tool, used for the tooltips
+        toggle : Bool
+            * `True` : The button is a toggle (change the pressed/unpressed
+              state between consecutive clicks)
+            * `False` : The button is a normal button (returns to unpressed
+              state after release)
+        """
+
+        raise NotImplementedError
+
+    def toggle_toolitem(self, name, toggled):
+        """
+        Toggle the toolitem without firing event
+
+        Parameters
+        ----------
+        name : String
+            Id of the tool to toggle
+        toggled : bool
+            Whether to set this tool as toggled or not.
+        """
+        raise NotImplementedError
+
+    def remove_toolitem(self, name):
+        """
+        Remove a toolitem from the `ToolContainer`
+
+        This method must get implemented per backend
+
+        Called when `ToolManager` emits a `tool_removed_event`
+
+        Parameters
+        ----------
+        name : string
+            Name of the tool to remove
+
+        """
+
+        raise NotImplementedError
+
+
+class StatusbarBase(object):
+    """Base class for the statusbar"""
+    def __init__(self, toolmanager):
+        self.toolmanager = toolmanager
+        self.toolmanager.toolmanager_connect('tool_message_event',
+                                             self._message_cbk)
+
+    def _message_cbk(self, event):
+        """Captures the 'tool_message_event' and set the message"""
+        self.set_message(event.message)
+
+    def set_message(self, s):
+        """
+        Display a message on toolbar or in status bar
+
+        Parameters
+        ----------
+        s : str
+            Message text
+        """
+
         pass

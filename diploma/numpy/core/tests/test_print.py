@@ -1,16 +1,25 @@
-import numpy as np
-from numpy.testing import *
+from __future__ import division, absolute_import, print_function
+
+import sys
+import locale
 import nose
 
-import locale
-import sys
-from StringIO import StringIO
+import numpy as np
+from numpy.testing import (
+    run_module_suite, assert_, assert_equal
+)
+
+
+if sys.version_info[0] >= 3:
+    from io import StringIO
+else:
+    from StringIO import StringIO
 
 _REF = {np.inf: 'inf', -np.inf: '-inf', np.nan: 'nan'}
 
 
 def check_float_type(tp):
-    for x in [0, 1,-1, 1e20] :
+    for x in [0, 1, -1, 1e20]:
         assert_equal(str(tp(x)), str(float(x)),
                      err_msg='Failed str formatting for type %s' % tp)
 
@@ -18,11 +27,7 @@ def check_float_type(tp):
         assert_equal(str(tp(1e10)), str(float('1e10')),
                      err_msg='Failed str formatting for type %s' % tp)
     else:
-        if sys.platform == 'win32' and sys.version_info[0] <= 2 and \
-           sys.version_info[1] <= 5:
-            ref = '1e+010'
-        else:
-            ref = '1e+10'
+        ref = '1e+10'
         assert_equal(str(tp(1e10)), ref,
                      err_msg='Failed str formatting for type %s' % tp)
 
@@ -34,7 +39,7 @@ def test_float_types():
         python float precision.
 
     """
-    for t in [np.float32, np.double, np.longdouble] :
+    for t in [np.float32, np.double, np.longdouble]:
         yield check_float_type, t
 
 def check_nan_inf_float(tp):
@@ -50,11 +55,11 @@ def test_nan_inf_float():
         python float precision.
 
     """
-    for t in [np.float32, np.double, np.longdouble] :
+    for t in [np.float32, np.double, np.longdouble]:
         yield check_nan_inf_float, t
 
 def check_complex_type(tp):
-    for x in [0, 1,-1, 1e20] :
+    for x in [0, 1, -1, 1e20]:
         assert_equal(str(tp(x)), str(complex(x)),
                      err_msg='Failed str formatting for type %s' % tp)
         assert_equal(str(tp(x*1j)), str(complex(x*1j)),
@@ -66,11 +71,7 @@ def check_complex_type(tp):
         assert_equal(str(tp(1e10)), str(complex(1e10)),
                      err_msg='Failed str formatting for type %s' % tp)
     else:
-        if sys.platform == 'win32' and sys.version_info[0] <= 2 and \
-           sys.version_info[1] <= 5:
-            ref = '(1e+010+0j)'
-        else:
-            ref = '(1e+10+0j)'
+        ref = '(1e+10+0j)'
         assert_equal(str(tp(1e10)), ref,
                      err_msg='Failed str formatting for type %s' % tp)
 
@@ -82,49 +83,29 @@ def test_complex_types():
         python float precision.
 
     """
-    for t in [np.complex64, np.cdouble, np.clongdouble] :
+    for t in [np.complex64, np.cdouble, np.clongdouble]:
         yield check_complex_type, t
 
 def test_complex_inf_nan():
     """Check inf/nan formatting of complex types."""
-    if sys.version_info >= (2, 6):
-        TESTS = {
-            complex(np.inf, 0): "(inf+0j)",
-            complex(0, np.inf): "inf*j",
-            complex(-np.inf, 0): "(-inf+0j)",
-            complex(0, -np.inf): "-inf*j",
-            complex(np.inf, 1): "(inf+1j)",
-            complex(1, np.inf): "(1+inf*j)",
-            complex(-np.inf, 1): "(-inf+1j)",
-            complex(1, -np.inf): "(1-inf*j)",
-            complex(np.nan, 0): "(nan+0j)",
-            complex(0, np.nan): "nan*j",
-            complex(-np.nan, 0): "(nan+0j)",
-            complex(0, -np.nan): "nan*j",
-            complex(np.nan, 1): "(nan+1j)",
-            complex(1, np.nan): "(1+nan*j)",
-            complex(-np.nan, 1): "(nan+1j)",
-            complex(1, -np.nan): "(1+nan*j)",
-        }
-    else:
-        TESTS = {
-            complex(np.inf, 0): "(inf+0j)",
-            complex(0, np.inf): "infj",
-            complex(-np.inf, 0): "(-inf+0j)",
-            complex(0, -np.inf): "-infj",
-            complex(np.inf, 1): "(inf+1j)",
-            complex(1, np.inf): "(1+infj)",
-            complex(-np.inf, 1): "(-inf+1j)",
-            complex(1, -np.inf): "(1-infj)",
-            complex(np.nan, 0): "(nan+0j)",
-            complex(0, np.nan): "nanj",
-            complex(-np.nan, 0): "(nan+0j)",
-            complex(0, -np.nan): "nanj",
-            complex(np.nan, 1): "(nan+1j)",
-            complex(1, np.nan): "(1+nanj)",
-            complex(-np.nan, 1): "(nan+1j)",
-            complex(1, -np.nan): "(1+nanj)",
-        }
+    TESTS = {
+        complex(np.inf, 0): "(inf+0j)",
+        complex(0, np.inf): "inf*j",
+        complex(-np.inf, 0): "(-inf+0j)",
+        complex(0, -np.inf): "-inf*j",
+        complex(np.inf, 1): "(inf+1j)",
+        complex(1, np.inf): "(1+inf*j)",
+        complex(-np.inf, 1): "(-inf+1j)",
+        complex(1, -np.inf): "(1-inf*j)",
+        complex(np.nan, 0): "(nan+0j)",
+        complex(0, np.nan): "nan*j",
+        complex(-np.nan, 0): "(nan+0j)",
+        complex(0, -np.nan): "nan*j",
+        complex(np.nan, 1): "(nan+1j)",
+        complex(1, np.nan): "(1+nan*j)",
+        complex(-np.nan, 1): "(nan+1j)",
+        complex(1, -np.nan): "(1+nan*j)",
+    }
     for tp in [np.complex64, np.cdouble, np.clongdouble]:
         for c, s in TESTS.items():
             yield _check_complex_inf_nan, c, s, tp
@@ -139,12 +120,12 @@ def _test_redirected_print(x, tp, ref=None):
     stdout = sys.stdout
     try:
         sys.stdout = file_tp
-        print tp(x)
+        print(tp(x))
         sys.stdout = file
         if ref:
-            print ref
+            print(ref)
         else:
-            print x
+            print(x)
     finally:
         sys.stdout = stdout
 
@@ -152,7 +133,7 @@ def _test_redirected_print(x, tp, ref=None):
                  err_msg='print failed for type%s' % tp)
 
 def check_float_type_print(tp):
-    for x in [0, 1,-1, 1e20]:
+    for x in [0, 1, -1, 1e20]:
         _test_redirected_print(float(x), tp)
 
     for x in [np.inf, -np.inf, np.nan]:
@@ -161,11 +142,7 @@ def check_float_type_print(tp):
     if tp(1e10).itemsize > 4:
         _test_redirected_print(float(1e10), tp)
     else:
-        if sys.platform == 'win32' and sys.version_info[0] <= 2 and \
-           sys.version_info[1] <= 5:
-            ref = '1e+010'
-        else:
-            ref = '1e+10'
+        ref = '1e+10'
         _test_redirected_print(float(1e10), tp, ref)
 
 def check_complex_type_print(tp):
@@ -177,11 +154,7 @@ def check_complex_type_print(tp):
     if tp(1e10).itemsize > 8:
         _test_redirected_print(complex(1e10), tp)
     else:
-        if sys.platform == 'win32' and sys.version_info[0] <= 2 and \
-           sys.version_info[1] <= 5:
-            ref = '(1e+010+0j)'
-        else:
-            ref = '(1e+10+0j)'
+        ref = '(1e+10+0j)'
         _test_redirected_print(complex(1e10), tp, ref)
 
     _test_redirected_print(complex(np.inf, 1), tp, '(inf+1j)')
@@ -190,15 +163,14 @@ def check_complex_type_print(tp):
 
 def test_float_type_print():
     """Check formatting when using print """
-    for t in [np.float32, np.double, np.longdouble] :
+    for t in [np.float32, np.double, np.longdouble]:
         yield check_float_type_print, t
 
 def test_complex_type_print():
     """Check formatting when using print """
-    for t in [np.complex64, np.cdouble, np.clongdouble] :
+    for t in [np.complex64, np.cdouble, np.clongdouble]:
         yield check_complex_type_print, t
 
-@dec.skipif(sys.version_info < (2,6))
 def test_scalar_format():
     """Test the str.format method with NumPy scalar types"""
     tests = [('{0}', True, np.bool_),
@@ -215,10 +187,20 @@ def test_scalar_format():
             ('{0:g}', 1.5, np.float32),
             ('{0:g}', 1.5, np.float64),
             ('{0:g}', 1.5, np.longdouble)]
+    # Python 2.6 doesn't implement complex.__format__
+    if sys.version_info[:2] > (2, 6):
+        tests += [('{0:g}', 1.5+0.5j, np.complex64),
+                ('{0:g}', 1.5+0.5j, np.complex128),
+                ('{0:g}', 1.5+0.5j, np.clongdouble)]
 
     for (fmat, val, valtype) in tests:
-        assert_equal(fmat.format(val), fmat.format(valtype(val)),
-                "failed with val %s, type %s" % (val, valtype))
+        try:
+            assert_equal(fmat.format(val), fmat.format(valtype(val)),
+                    "failed with val %s, type %s" % (val, valtype))
+        except ValueError as e:
+            assert_(False,
+               "format raised exception (fmt='%s', val=%s, type=%s, exc='%s')" %
+                            (fmat, repr(val), repr(valtype), str(e)))
 
 
 # Locale tests: scalar types formatting should be independent of the locale

@@ -1,11 +1,13 @@
-# Code shared by distutils and scons builds
+from __future__ import division, absolute_import, print_function
+
+# Code common to build tools
 import sys
-from os.path import join
 import warnings
 import copy
 import binascii
 
-from distutils.ccompiler import CompileError
+from numpy.distutils.misc_util import mingw32
+
 
 #-------------------
 # Versioning support
@@ -29,7 +31,12 @@ C_ABI_VERSION = 0x01000009
 # without breaking binary compatibility.  In this case, only the C_API_VERSION
 # (*not* C_ABI_VERSION) would be increased.  Whenever binary compatibility is
 # broken, both C_API_VERSION and C_ABI_VERSION should be increased.
-C_API_VERSION = 0x00000006
+#
+# 0x00000008 - 1.7.x
+# 0x00000009 - 1.8.x
+# 0x00000009 - 1.9.x
+# 0x0000000a - 1.10.x
+C_API_VERSION = 0x0000000a
 
 class MismatchCAPIWarning(Warning):
     pass
@@ -47,11 +54,13 @@ def is_released(config):
     return True
 
 def get_api_versions(apiversion, codegen_dir):
-    """Return current C API checksum and the recorded checksum for the given
-    version of the C API version."""
-    api_files = [join(codegen_dir, 'numpy_api_order.txt'),
-                 join(codegen_dir, 'ufunc_api_order.txt')]
+    """
+    Return current C API checksum and the recorded checksum.
 
+    Return current C API checksum and the recorded checksum for the given
+    version of the C API version.
+
+    """
     # Compute the hash of the current API as defined in the .txt files in
     # code_generators
     sys.path.insert(0, codegen_dir)
@@ -76,11 +85,12 @@ def check_api_version(apiversion, codegen_dir):
     # To compute the checksum of the current API, use
     # code_generators/cversions.py script
     if not curapi_hash == api_hash:
-        msg = "API mismatch detected, the C API version " \
-              "numbers have to be updated. Current C api version is %d, " \
-              "with checksum %s, but recorded checksum for C API version %d in " \
-              "codegen_dir/cversions.txt is %s. If functions were added in the " \
-              "C API, you have to update C_API_VERSION  in %s."
+        msg = ("API mismatch detected, the C API version "
+               "numbers have to be updated. Current C api version is %d, "
+               "with checksum %s, but recorded checksum for C API version %d in "
+               "codegen_dir/cversions.txt is %s. If functions were added in the "
+               "C API, you have to update C_API_VERSION  in %s."
+               )
         warnings.warn(msg % (apiversion, curapi_hash, apiversion, api_hash,
                              __file__),
                       MismatchCAPIWarning)
@@ -93,26 +103,69 @@ MANDATORY_FUNCS = ["sin", "cos", "tan", "sinh", "cosh", "tanh", "fabs",
 # replacement implementation. Note that some of these are C99 functions.
 OPTIONAL_STDFUNCS = ["expm1", "log1p", "acosh", "asinh", "atanh",
         "rint", "trunc", "exp2", "log2", "hypot", "atan2", "pow",
-        "copysign", "nextafter"]
+        "copysign", "nextafter", "ftello", "fseeko",
+        "strtoll", "strtoull", "cbrt"]
+
+
+OPTIONAL_HEADERS = [
+# sse headers only enabled automatically on amd64/x32 builds
+                "xmmintrin.h",  # SSE
+                "emmintrin.h",  # SSE2
+                "features.h",  # for glibc version linux
+]
+
+# optional gcc compiler builtins and their call arguments and optional a
+# required header
+# call arguments are required as the compiler will do strict signature checking
+OPTIONAL_INTRINSICS = [("__builtin_isnan", '5.'),
+                       ("__builtin_isinf", '5.'),
+                       ("__builtin_isfinite", '5.'),
+                       ("__builtin_bswap32", '5u'),
+                       ("__builtin_bswap64", '5u'),
+                       ("__builtin_expect", '5, 0'),
+                       ("__builtin_mul_overflow", '5, 5, (int*)5'),
+                       ("_mm_load_ps", '(float*)0', "xmmintrin.h"),  # SSE
+                       ("_mm_load_pd", '(double*)0', "emmintrin.h"),  # SSE2
+                       ]
+
+# function attributes
+# tested via "int %s %s(void *);" % (attribute, name)
+# function name will be converted to HAVE_<upper-case-name> preprocessor macro
+OPTIONAL_FUNCTION_ATTRIBUTES = [('__attribute__((optimize("unroll-loops")))',
+                                'attribute_optimize_unroll_loops'),
+                                ('__attribute__((optimize("O3")))',
+                                 'attribute_optimize_opt_3'),
+                                ('__attribute__((nonnull (1)))',
+                                 'attribute_nonnull'),
+                                ]
+
+# variable attributes tested via "int %s a" % attribute
+OPTIONAL_VARIABLE_ATTRIBUTES = ["__thread", "__declspec(thread)"]
 
 # Subset of OPTIONAL_STDFUNCS which may alreay have HAVE_* defined by Python.h
-OPTIONAL_STDFUNCS_MAYBE = ["expm1", "log1p", "acosh", "atanh", "asinh", "hypot",
-        "copysign"]
+OPTIONAL_STDFUNCS_MAYBE = [
+    "expm1", "log1p", "acosh", "atanh", "asinh", "hypot", "copysign",
+    "ftello", "fseeko"
+    ]
 
 # C99 functions: float and long double versions
-C99_FUNCS = ["sin", "cos", "tan", "sinh", "cosh", "tanh", "fabs", "floor",
-        "ceil", "rint", "trunc", "sqrt", "log10", "log", "log1p", "exp",
-        "expm1", "asin", "acos", "atan", "asinh", "acosh", "atanh",
-        "hypot", "atan2", "pow", "fmod", "modf", 'frexp', 'ldexp',
-        "exp2", "log2", "copysign", "nextafter"]
-
+C99_FUNCS = [
+    "sin", "cos", "tan", "sinh", "cosh", "tanh", "fabs", "floor", "ceil",
+    "rint", "trunc", "sqrt", "log10", "log", "log1p", "exp", "expm1",
+    "asin", "acos", "atan", "asinh", "acosh", "atanh", "hypot", "atan2",
+    "pow", "fmod", "modf", 'frexp', 'ldexp', "exp2", "log2", "copysign",
+    "nextafter", "cbrt"
+    ]
 C99_FUNCS_SINGLE = [f + 'f' for f in C99_FUNCS]
 C99_FUNCS_EXTENDED = [f + 'l' for f in C99_FUNCS]
-
-C99_COMPLEX_TYPES = ['complex double', 'complex float', 'complex long double']
-
-C99_COMPLEX_FUNCS = ['creal', 'cimag', 'cabs', 'carg', 'cexp', 'csqrt', 'clog',
-                  'ccos', 'csin', 'cpow']
+C99_COMPLEX_TYPES = [
+    'complex double', 'complex float', 'complex long double'
+    ]
+C99_COMPLEX_FUNCS = [
+    "cabs", "cacos", "cacosh", "carg", "casin", "casinh", "catan",
+    "catanh", "ccos", "ccosh", "cexp", "cimag", "clog", "conj", "cpow",
+    "cproj", "creal", "csin", "csinh", "csqrt", "ctan", "ctanh"
+    ]
 
 def fname2def(name):
     return "HAVE_%s" % name.upper()
@@ -130,11 +183,30 @@ def check_long_double_representation(cmd):
     cmd._check_compiler()
     body = LONG_DOUBLE_REPRESENTATION_SRC % {'type': 'long double'}
 
+    # Disable whole program optimization (the default on vs2015, with python 3.5+)
+    # which generates intermediary object files and prevents checking the
+    # float representation.
+    if sys.platform == "win32" and not mingw32():
+        try:
+            cmd.compiler.compile_options.remove("/GL")
+        except ValueError:
+            pass
+
     # We need to use _compile because we need the object filename
-    src, object = cmd._compile(body, None, None, 'c')
+    src, obj = cmd._compile(body, None, None, 'c')
     try:
-        type = long_double_representation(pyod(object))
-        return type
+        ltype = long_double_representation(pyod(obj))
+        return ltype
+    except ValueError:
+        # try linking to support CC="gcc -flto" or icc -ipo
+        # struct needs to be volatile so it isn't optimized away
+        body = body.replace('struct', 'volatile struct')
+        body += "int main(void) { return 0; }\n"
+        src, obj = cmd._compile(body, None, None, 'c')
+        cmd.temp_files.append("_configtest")
+        cmd.compiler.link_executable([obj], "_configtest")
+        ltype = long_double_representation(pyod("_configtest"))
+        return ltype
     finally:
         cmd._clean()
 
@@ -161,13 +233,14 @@ def pyod(filename):
 
     Parameters
     ----------
-    filename: str
+    filename : str
         name of the file to get the dump from.
 
     Returns
     -------
-    out: seq
+    out : seq
         list of lines of od output
+
     Note
     ----
     We only implement enough to get the necessary information for long double
@@ -206,9 +279,9 @@ def pyod(filename):
     else:
         return _pyod3()
 
-_BEFORE_SEQ = ['000','000','000','000','000','000','000','000',
-              '001','043','105','147','211','253','315','357']
-_AFTER_SEQ = ['376', '334','272','230','166','124','062','020']
+_BEFORE_SEQ = ['000', '000', '000', '000', '000', '000', '000', '000',
+              '001', '043', '105', '147', '211', '253', '315', '357']
+_AFTER_SEQ = ['376', '334', '272', '230', '166', '124', '062', '020']
 
 _IEEE_DOUBLE_BE = ['301', '235', '157', '064', '124', '000', '000', '000']
 _IEEE_DOUBLE_LE = _IEEE_DOUBLE_BE[::-1]
@@ -216,11 +289,15 @@ _INTEL_EXTENDED_12B = ['000', '000', '000', '000', '240', '242', '171', '353',
                        '031', '300', '000', '000']
 _INTEL_EXTENDED_16B = ['000', '000', '000', '000', '240', '242', '171', '353',
                        '031', '300', '000', '000', '000', '000', '000', '000']
+_MOTOROLA_EXTENDED_12B = ['300', '031', '000', '000', '353', '171',
+                          '242', '240', '000', '000', '000', '000']
 _IEEE_QUAD_PREC_BE = ['300', '031', '326', '363', '105', '100', '000', '000',
                       '000', '000', '000', '000', '000', '000', '000', '000']
 _IEEE_QUAD_PREC_LE = _IEEE_QUAD_PREC_BE[::-1]
-_DOUBLE_DOUBLE_BE = ['301', '235', '157', '064', '124', '000', '000', '000'] + \
-                    ['000'] * 8
+_DOUBLE_DOUBLE_BE = (['301', '235', '157', '064', '124', '000', '000', '000'] +
+                     ['000'] * 8)
+_DOUBLE_DOUBLE_LE = (['000', '000', '000', '124', '064', '157', '235', '301'] +
+                     ['000'] * 8)
 
 def long_double_representation(lines):
     """Given a binary dump as given by GNU od -b, look for long double
@@ -249,6 +326,8 @@ def long_double_representation(lines):
                 if read[:12] == _BEFORE_SEQ[4:]:
                     if read[12:-8] == _INTEL_EXTENDED_12B:
                         return 'INTEL_EXTENDED_12_BYTES_LE'
+                    if read[12:-8] == _MOTOROLA_EXTENDED_12B:
+                        return 'MOTOROLA_EXTENDED_12_BYTES_BE'
                 elif read[:8] == _BEFORE_SEQ[8:]:
                     if read[8:-8] == _INTEL_EXTENDED_16B:
                         return 'INTEL_EXTENDED_16_BYTES_LE'
@@ -258,6 +337,8 @@ def long_double_representation(lines):
                         return 'IEEE_QUAD_LE'
                     elif read[8:-8] == _DOUBLE_DOUBLE_BE:
                         return 'DOUBLE_DOUBLE_BE'
+                    elif read[8:-8] == _DOUBLE_DOUBLE_LE:
+                        return 'DOUBLE_DOUBLE_LE'
                 elif read[:16] == _BEFORE_SEQ:
                     if read[16:-8] == _IEEE_DOUBLE_LE:
                         return 'IEEE_DOUBLE_LE'

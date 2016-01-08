@@ -1,11 +1,18 @@
 #ifndef NPY_NOPREFIX_H
 #define NPY_NOPREFIX_H
 
-/* You can directly include noprefix.h as a backward
-compatibility measure*/
+/*
+ * You can directly include noprefix.h as a backward
+ * compatibility measure
+ */
 #ifndef NPY_NO_PREFIX
 #include "ndarrayobject.h"
+#include "npy_interrupt.h"
 #endif
+
+#define SIGSETJMP   NPY_SIGSETJMP
+#define SIGLONGJMP  NPY_SIGLONGJMP
+#define SIGJMP_BUF  NPY_SIGJMP_BUF
 
 #define MAX_DIMS NPY_MAXDIMS
 
@@ -57,15 +64,18 @@ compatibility measure*/
 #define datetime    npy_datetime
 #define timedelta   npy_timedelta
 
-#define SIZEOF_INTP NPY_SIZEOF_INTP
-#define SIZEOF_UINTP NPY_SIZEOF_UINTP
-#define SIZEOF_DATETIME NPY_SIZEOF_DATETIME
-#define SIZEOF_TIMEDELTA NPY_SIZEOF_TIMEDELTA
+#define SIZEOF_LONGLONG         NPY_SIZEOF_LONGLONG
+#define SIZEOF_INTP             NPY_SIZEOF_INTP
+#define SIZEOF_UINTP            NPY_SIZEOF_UINTP
+#define SIZEOF_HALF             NPY_SIZEOF_HALF
+#define SIZEOF_LONGDOUBLE       NPY_SIZEOF_LONGDOUBLE
+#define SIZEOF_DATETIME         NPY_SIZEOF_DATETIME
+#define SIZEOF_TIMEDELTA        NPY_SIZEOF_TIMEDELTA
 
 #define LONGLONG_FMT NPY_LONGLONG_FMT
 #define ULONGLONG_FMT NPY_ULONGLONG_FMT
 #define LONGLONG_SUFFIX NPY_LONGLONG_SUFFIX
-#define ULONGLONG_SUFFIX NPY_ULONGLONG_SUFFIX(x)
+#define ULONGLONG_SUFFIX NPY_ULONGLONG_SUFFIX
 
 #define MAX_INT8 127
 #define MIN_INT8 -128
@@ -106,9 +116,6 @@ compatibility measure*/
 #define MIN_TIMEDELTA NPY_MIN_TIMEDELTA
 #define MAX_TIMEDELTA NPY_MAX_TIMEDELTA
 
-#define SIZEOF_LONGDOUBLE NPY_SIZEOF_LONGDOUBLE
-#define SIZEOF_LONGLONG   NPY_SIZEOF_LONGLONG
-#define SIZEOF_HALF       NPY_SIZEOF_HALF
 #define BITSOF_BOOL       NPY_BITSOF_BOOL
 #define BITSOF_CHAR       NPY_BITSOF_CHAR
 #define BITSOF_SHORT      NPY_BITSOF_SHORT
@@ -122,7 +129,6 @@ compatibility measure*/
 #define BITSOF_DATETIME   NPY_BITSOF_DATETIME
 #define BITSOF_TIMEDELTA   NPY_BITSOF_TIMEDELTA
 
-#define PyArray_UCS4 npy_ucs4
 #define _pya_malloc PyArray_malloc
 #define _pya_free PyArray_free
 #define _pya_realloc PyArray_realloc

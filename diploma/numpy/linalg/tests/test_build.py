@@ -1,32 +1,36 @@
-from subprocess import call, PIPE, Popen
+from __future__ import division, absolute_import, print_function
+
+from subprocess import PIPE, Popen
 import sys
 import re
 
-import numpy as np
 from numpy.linalg import lapack_lite
-from numpy.testing import TestCase, dec
+from numpy.testing import TestCase, dec, run_module_suite
 
 from numpy.compat import asbytes_nested
 
-class FindDependenciesLdd:
+
+class FindDependenciesLdd(object):
+
     def __init__(self):
         self.cmd = ['ldd']
 
         try:
-            st = call(self.cmd, stdout=PIPE, stderr=PIPE)
+            p = Popen(self.cmd, stdout=PIPE, stderr=PIPE)
+            stdout, stderr = p.communicate()
         except OSError:
             raise RuntimeError("command %s cannot be run" % self.cmd)
 
-    def get_dependencies(self, file):
-        p = Popen(self.cmd + [file], stdout=PIPE, stderr=PIPE)
+    def get_dependencies(self, lfile):
+        p = Popen(self.cmd + [lfile], stdout=PIPE, stderr=PIPE)
         stdout, stderr = p.communicate()
         if not (p.returncode == 0):
-            raise RuntimeError("Failed to check dependencies for %s" % libfile)
+            raise RuntimeError("failed dependencies check for %s" % lfile)
 
         return stdout
 
-    def grep_dependencies(self, file, deps):
-        stdout = self.get_dependencies(file)
+    def grep_dependencies(self, lfile, deps):
+        stdout = self.get_dependencies(lfile)
 
         rdeps = dict([(dep, re.compile(dep)) for dep in deps])
         founds = []
@@ -37,7 +41,9 @@ class FindDependenciesLdd:
 
         return founds
 
+
 class TestF77Mismatch(TestCase):
+
     @dec.skipif(not(sys.platform[:5] == 'linux'),
                 "Skipping fortran compiler mismatch on non Linux platform")
     def test_lapack(self):
@@ -45,6 +51,9 @@ class TestF77Mismatch(TestCase):
         deps = f.grep_dependencies(lapack_lite.__file__,
                                    asbytes_nested(['libg2c', 'libgfortran']))
         self.assertFalse(len(deps) > 1,
-"""Both g77 and gfortran runtimes linked in lapack_lite ! This is likely to
+                         """Both g77 and gfortran runtimes linked in lapack_lite ! This is likely to
 cause random crashes and wrong results. See numpy INSTALL.txt for more
 information.""")
+
+if __name__ == "__main__":
+    run_module_suite()

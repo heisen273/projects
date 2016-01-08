@@ -1,4 +1,10 @@
+from __future__ import (absolute_import, division, print_function,
+                        unicode_literals)
+
+from matplotlib.externals import six
+
 import matplotlib.cbook as cbook
+
 
 class Container(tuple):
     """
@@ -15,7 +21,7 @@ class Container(tuple):
 
         self.eventson = False  # fire events only if eventson
         self._oid = 0  # an observer id
-        self._propobservers = {} # a dict from oids to funcs
+        self._propobservers = {}  # a dict from oids to funcs
 
         self._remove_method = None
 
@@ -29,7 +35,14 @@ class Container(tuple):
             c.remove()
 
         if self._remove_method:
-            self._remove_method()
+            self._remove_method(self)
+
+    def __getstate__(self):
+        d = self.__dict__.copy()
+        # remove the unpicklable remove method, this will get re-added on load
+        # (by the axes) if the artist lives on an axes.
+        d['_remove_method'] = None
+        return d
 
     def get_label(self):
         """
@@ -41,9 +54,12 @@ class Container(tuple):
         """
         Set the label to *s* for auto legend.
 
-        ACCEPTS: any string
+        ACCEPTS: string or anything printable with '%s' conversion.
         """
-        self._label = s
+        if s is not None:
+            self._label = '%s' % (s, )
+        else:
+            self._label = None
         self.pchanged()
 
     def add_callback(self, func):
@@ -69,15 +85,17 @@ class Container(tuple):
                For adding callbacks
 
         """
-        try: del self._propobservers[oid]
-        except KeyError: pass
+        try:
+            del self._propobservers[oid]
+        except KeyError:
+            pass
 
     def pchanged(self):
         """
         Fire an event when property changed, calling all of the
         registered callbacks.
         """
-        for oid, func in self._propobservers.items():
+        for oid, func in list(six.iteritems(self._propobservers)):
             func(self)
 
     def get_children(self):
@@ -109,5 +127,3 @@ class StemContainer(Container):
         self.stemlines = stemlines
         self.baseline = baseline
         Container.__init__(self, markerline_stemlines_baseline, **kwargs)
-
-

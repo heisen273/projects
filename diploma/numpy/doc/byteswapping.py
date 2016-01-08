@@ -1,4 +1,4 @@
-'''
+"""
 
 =============================
  Byteswapping and byte order
@@ -61,6 +61,15 @@ Returning to our ``big_end_arr`` - in this case our underlying data is
 big-endian (data endianness) and we've set the dtype to match (the dtype
 is also big-endian).  However, sometimes you need to flip these around.
 
+.. warning::
+
+    Scalars currently do not include byte order information, so extracting
+    a scalar from an array will return an integer in native byte order.
+    Hence:
+
+    >>> big_end_arr[0].dtype.byteorder == little_end_u4[0].dtype.byteorder
+    True
+
 Changing byte ordering
 ======================
 
@@ -101,7 +110,7 @@ the correct endianness:
 
 Note the the array has not changed in memory:
 
->>> fixed_end_dtype_arr.tostring() == big_end_str
+>>> fixed_end_dtype_arr.tobytes() == big_end_str
 True
 
 Data and type endianness don't match, change data to match dtype
@@ -117,7 +126,7 @@ that needs a certain byte ordering.
 
 Now the array *has* changed in memory:
 
->>> fixed_end_mem_arr.tostring() == big_end_str
+>>> fixed_end_mem_arr.tobytes() == big_end_str
 False
 
 Data and dtype endianness match, swap data and dtype
@@ -131,7 +140,17 @@ the previous operations:
 >>> swapped_end_arr = big_end_arr.byteswap().newbyteorder()
 >>> swapped_end_arr[0]
 1
->>> swapped_end_arr.tostring() == big_end_str
+>>> swapped_end_arr.tobytes() == big_end_str
 False
 
-'''
+An easier way of casting the data to a specific dtype and byte ordering
+can be achieved with the ndarray astype method:
+
+>>> swapped_end_arr = big_end_arr.astype('<i2')
+>>> swapped_end_arr[0]
+1
+>>> swapped_end_arr.tobytes() == big_end_str
+False
+
+"""
+from __future__ import division, absolute_import, print_function

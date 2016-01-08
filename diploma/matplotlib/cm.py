@@ -4,6 +4,10 @@ registering new colormaps and for getting a colormap by name,
 and a mixin class for adding color mapping functionality.
 
 """
+from __future__ import (absolute_import, division, print_function,
+                        unicode_literals)
+
+from matplotlib.externals import six
 
 import os
 
@@ -14,32 +18,36 @@ import matplotlib.colors as colors
 import matplotlib.cbook as cbook
 from matplotlib._cm import datad
 from matplotlib._cm import cubehelix
+from matplotlib._cm_listed import cmaps as cmaps_listed
 
 cmap_d = dict()
 
 # reverse all the colormaps.
 # reversed colormaps have '_r' appended to the name.
 
+
 def _reverser(f):
     def freversed(x):
-        return f(1-x)
+        return f(1 - x)
     return freversed
+
 
 def revcmap(data):
     """Can only handle specification *data* in dictionary format."""
     data_r = {}
-    for key, val in data.iteritems():
-        if callable(val):
+    for key, val in six.iteritems(data):
+        if six.callable(val):
             valnew = _reverser(val)
-                # This doesn't work: lambda x: val(1-x)
-                # The same "val" (the first one) is used
-                # each time, so the colors are identical
-                # and the result is shades of gray.
+            # This doesn't work: lambda x: val(1-x)
+            # The same "val" (the first one) is used
+            # each time, so the colors are identical
+            # and the result is shades of gray.
         else:
             # Flip x and exchange the y values facing x = 0 and x = 1.
             valnew = [(1.0 - x, y1, y0) for x, y0, y1 in reversed(val)]
         data_r[key] = valnew
     return data_r
+
 
 def _reverse_cmap_spec(spec):
     """Reverses cmap specification *spec*, can handle both dict and tuple
@@ -52,6 +60,7 @@ def _reverse_cmap_spec(spec):
         if len(revspec[0]) == 2:    # e.g., (1, (1.0, 0.0, 1.0))
             revspec = [(1.0 - a, b) for a, b in revspec]
         return revspec
+
 
 def _generate_cmap(name, lutsize):
     """Generates the requested cmap from it's name *name*.  The lut size is
@@ -67,11 +76,8 @@ def _generate_cmap(name, lutsize):
 
 LUTSIZE = mpl.rcParams['image.lut']
 
-_cmapnames = datad.keys()  # need this list because datad is changed in loop
-
 # Generate the reversed specifications ...
-
-for cmapname in _cmapnames:
+for cmapname in list(six.iterkeys(datad)):
     spec = datad[cmapname]
     spec_reversed = _reverse_cmap_spec(spec)
     datad[cmapname + '_r'] = spec_reversed
@@ -79,12 +85,16 @@ for cmapname in _cmapnames:
 # Precache the cmaps with ``lutsize = LUTSIZE`` ...
 
 # Use datad.keys() to also add the reversed ones added in the section above:
-for cmapname in datad.keys():
+for cmapname in six.iterkeys(datad):
     cmap_d[cmapname] = _generate_cmap(cmapname, LUTSIZE)
+
+cmap_d.update(cmaps_listed)
 
 locals().update(cmap_d)
 
+
 # Continue with definitions ...
+
 
 def register_cmap(name=None, cmap=None, data=None, lut=None):
     """
@@ -96,12 +106,12 @@ def register_cmap(name=None, cmap=None, data=None, lut=None):
 
         register_cmap(name='choppy', data=choppydata, lut=128)
 
-    In the first case, *cmap* must be a :class:`colors.Colormap`
+    In the first case, *cmap* must be a :class:`matplotlib.colors.Colormap`
     instance.  The *name* is optional; if absent, the name will
-    be the :attr:`name` attribute of the *cmap*.
+    be the :attr:`~matplotlib.colors.Colormap.name` attribute of the *cmap*.
 
     In the second case, the three arguments are passed to
-    the :class:`colors.LinearSegmentedColormap` initializer,
+    the :class:`~matplotlib.colors.LinearSegmentedColormap` initializer,
     and the resulting colormap is registered.
 
     """
@@ -124,20 +134,20 @@ def register_cmap(name=None, cmap=None, data=None, lut=None):
     cmap = colors.LinearSegmentedColormap(name, data, lut)
     cmap_d[name] = cmap
 
+
 def get_cmap(name=None, lut=None):
     """
     Get a colormap instance, defaulting to rc values if *name* is None.
 
     Colormaps added with :func:`register_cmap` take precedence over
-    builtin colormaps.
+    built-in colormaps.
 
-    If *name* is a :class:`colors.Colormap` instance, it will be
+    If *name* is a :class:`matplotlib.colors.Colormap` instance, it will be
     returned.
 
     If *lut* is not None it must be an integer giving the number of
-    entries desired in the lookup table, and *name* must be a
-    standard mpl colormap name with a corresponding data dictionary
-    in *datad*.
+    entries desired in the lookup table, and *name* must be a standard
+    mpl colormap name.
     """
     if name is None:
         name = mpl.rcParams['image.cmap']
@@ -148,67 +158,105 @@ def get_cmap(name=None, lut=None):
     if name in cmap_d:
         if lut is None:
             return cmap_d[name]
-        elif name in datad:
-            return _generate_cmap(name, lut)
         else:
-            raise ValueError("Colormap %s is not recognized" % name)
+            return cmap_d[name]._resample(lut)
+    else:
+        raise ValueError(
+            "Colormap %s is not recognized. Possible values are: %s"
+            % (name, ', '.join(sorted(cmap_d.keys()))))
 
-class ScalarMappable:
-    """
-    This is a mixin class to support scalar -> RGBA mapping.  Handles
-    normalization and colormapping
-    """
 
+class ScalarMappable(object):
+    """
+    This is a mixin class to support scalar data to RGBA mapping.
+    The ScalarMappable makes use of data normalization before returning
+    RGBA colors from the given colormap.
+
+    """
     def __init__(self, norm=None, cmap=None):
-        """
-        *norm* is an instance of :class:`colors.Normalize` or one of
-        its subclasses, used to map luminance to 0-1. *cmap* is a
-        :mod:`cm` colormap instance, for example :data:`cm.jet`
+        r"""
+
+        Parameters
+        ----------
+        norm : :class:`matplotlib.colors.Normalize` instance
+            The normalizing object which scales data, typically into the
+            interval ``[0, 1]``.
+            If *None*, *norm* defaults to a *colors.Normalize* object which
+            initializes its scaling based on the first data processed.
+        cmap : str or :class:`~matplotlib.colors.Colormap` instance
+            The colormap used to map normalized data values to RGBA colors.
         """
 
         self.callbacksSM = cbook.CallbackRegistry()
 
-        if cmap is None: cmap = get_cmap()
-        if norm is None: norm = colors.Normalize()
+        if cmap is None:
+            cmap = get_cmap()
+        if norm is None:
+            norm = colors.Normalize()
 
         self._A = None
+        #: The Normalization instance of this ScalarMappable.
         self.norm = norm
+        #: The Colormap instance of this ScalarMappable.
         self.cmap = get_cmap(cmap)
+        #: The last colorbar associated with this ScalarMappable. May be None.
         self.colorbar = None
-        self.update_dict = {'array':False}
-
-    def set_colorbar(self, im, ax):
-        'set the colorbar image and axes associated with mappable'
-        self.colorbar = im, ax
+        self.update_dict = {'array': False}
 
     def to_rgba(self, x, alpha=None, bytes=False):
-        '''Return a normalized rgba array corresponding to *x*. If *x*
-        is already an rgb array, insert *alpha*; if it is already
-        rgba, return it unchanged. If *bytes* is True, return rgba as
-        4 uint8s instead of 4 floats.
-        '''
-        if alpha is None:
-            _alpha = 1.0
-        else:
-            _alpha = alpha
+        """
+        Return a normalized rgba array corresponding to *x*.
+
+        In the normal case, *x* is a 1-D or 2-D sequence of scalars, and
+        the corresponding ndarray of rgba values will be returned,
+        based on the norm and colormap set for this ScalarMappable.
+
+        There is one special case, for handling images that are already
+        rgb or rgba, such as might have been read from an image file.
+        If *x* is an ndarray with 3 dimensions,
+        and the last dimension is either 3 or 4, then it will be
+        treated as an rgb or rgba array, and no mapping will be done.
+        If the last dimension is 3, the *alpha* kwarg (defaulting to 1)
+        will be used to fill in the transparency.  If the last dimension
+        is 4, the *alpha* kwarg is ignored; it does not
+        replace the pre-existing alpha.  A ValueError will be raised
+        if the third dimension is other than 3 or 4.
+
+        In either case, if *bytes* is *False* (default), the rgba
+        array will be floats in the 0-1 range; if it is *True*,
+        the returned rgba array will be uint8 in the 0 to 255 range.
+
+        Note: this method assumes the input is well-behaved; it does
+        not check for anomalies such as *x* being a masked rgba
+        array, or being an integer type other than uint8, or being
+        a floating point rgba array with values outside the 0-1 range.
+        """
+        # First check for special case, image input:
         try:
             if x.ndim == 3:
                 if x.shape[2] == 3:
+                    if alpha is None:
+                        alpha = 1
                     if x.dtype == np.uint8:
-                        _alpha = np.array(_alpha*255, np.uint8)
+                        alpha = np.uint8(alpha * 255)
                     m, n = x.shape[:2]
-                    xx = np.empty(shape=(m,n,4), dtype = x.dtype)
-                    xx[:,:,:3] = x
-                    xx[:,:,3] = _alpha
+                    xx = np.empty(shape=(m, n, 4), dtype=x.dtype)
+                    xx[:, :, :3] = x
+                    xx[:, :, 3] = alpha
                 elif x.shape[2] == 4:
                     xx = x
                 else:
                     raise ValueError("third dimension must be 3 or 4")
                 if bytes and xx.dtype != np.uint8:
                     xx = (xx * 255).astype(np.uint8)
+                if not bytes and xx.dtype == np.uint8:
+                    xx = xx.astype(float) / 255
                 return xx
         except AttributeError:
+            # e.g., x is not an ndarray; so try mapping it
             pass
+
+        # This is the normal case, mapping a scalar array:
         x = ma.asarray(x)
         x = self.norm(x)
         x = self.cmap(x, alpha=alpha, bytes=bytes)
@@ -240,11 +288,13 @@ class ScalarMappable:
         ACCEPTS: a length 2 sequence of floats
         """
         if (vmin is not None and vmax is None and
-                                cbook.iterable(vmin) and len(vmin)==2):
+                cbook.iterable(vmin) and len(vmin) == 2):
             vmin, vmax = vmin
 
-        if vmin is not None: self.norm.vmin = vmin
-        if vmax is not None: self.norm.vmax = vmax
+        if vmin is not None:
+            self.norm.vmin = vmin
+        if vmax is not None:
+            self.norm.vmax = vmax
         self.changed()
 
     def set_cmap(self, cmap):
@@ -259,7 +309,8 @@ class ScalarMappable:
 
     def set_norm(self, norm):
         'set the normalization instance'
-        if norm is None: norm = colors.Normalize()
+        if norm is None:
+            norm = colors.Normalize()
         self.norm = norm
         self.changed()
 
@@ -282,7 +333,6 @@ class ScalarMappable:
             raise TypeError('You must first set_array for mappable')
         self.norm.autoscale_None(self._A)
         self.changed()
-
 
     def add_checker(self, checker):
         """

@@ -2,6 +2,7 @@
 # try_compile call. try_run works but is untested for most of Fortran
 # compilers (they must define linker_exe first).
 # Pearu Peterson
+from __future__ import division, absolute_import, print_function
 
 import os, signal
 import warnings
@@ -15,7 +16,11 @@ from distutils.ccompiler import CompileError, LinkError
 import distutils
 from numpy.distutils.exec_command import exec_command
 from numpy.distutils.mingw32ccompiler import generate_manifest
-from numpy.distutils.command.autodist import check_inline, check_compiler_gcc4
+from numpy.distutils.command.autodist import (check_gcc_function_attribute,
+                                              check_gcc_variable_attribute,
+                                              check_inline,
+                                              check_restrict,
+                                              check_compiler_gcc4)
 from numpy.distutils.compat import get_exception
 
 LANG_EXT['f77'] = '.f'
@@ -30,22 +35,12 @@ class config(old_config):
         self.fcompiler = None
         old_config.initialize_options(self)
 
-    def try_run(self, body, headers=None, include_dirs=None,
-                libraries=None, library_dirs=None, lang="c"):
-        warnings.warn("\n+++++++++++++++++++++++++++++++++++++++++++++++++\n" \
-                      "Usage of try_run is deprecated: please do not \n" \
-                      "use it anymore, and avoid configuration checks \n" \
-                      "involving running executable on the target machine.\n" \
-                      "+++++++++++++++++++++++++++++++++++++++++++++++++\n",
-                      DeprecationWarning)
-        return old_config.try_run(self, body, headers, include_dirs, libraries,
-                                  library_dirs, lang)
-
     def _check_compiler (self):
         old_config._check_compiler(self)
         from numpy.distutils.fcompiler import FCompiler, new_fcompiler
 
-        if sys.platform == 'win32' and self.compiler.compiler_type == 'msvc':
+        if sys.platform == 'win32' and (self.compiler.compiler_type in
+                                        ('msvc', 'intelw', 'intelemw')):
             # XXX: hack to circumvent a python 2.6 bug with msvc9compiler:
             # initialize call query_vcvarsall, which throws an IOError, and
             # causes an error along the way without much information. We try to
@@ -58,16 +53,27 @@ class config(old_config):
                     e = get_exception()
                     msg = """\
 Could not initialize compiler instance: do you have Visual Studio
-installed ? If you are trying to build with mingw, please use python setup.py
-build -c mingw32 instead ). If you have Visual Studio installed, check it is
-correctly installed, and the right version (VS 2008 for python 2.6, VS 2003 for
-2.5, etc...). Original exception was: %s, and the Compiler
-class was %s
+installed?  If you are trying to build with MinGW, please use "python setup.py
+build -c mingw32" instead.  If you have Visual Studio installed, check it is
+correctly installed, and the right version (VS 2008 for python 2.6, 2.7 and 3.2,
+VS 2010 for >= 3.3).
+
+Original exception was: %s, and the Compiler class was %s
 ============================================================================""" \
                         % (e, self.compiler.__class__.__name__)
                     print ("""\
 ============================================================================""")
                     raise distutils.errors.DistutilsPlatformError(msg)
+
+            # After MSVC is initialized, add an explicit /MANIFEST to linker
+            # flags.  See issues gh-4245 and gh-4101 for details.  Also
+            # relevant are issues 4431 and 16296 on the Python bug tracker.
+            from distutils import msvc9compiler
+            if msvc9compiler.get_build_version() >= 10:
+                for ldflags in [self.compiler.ldflags_shared,
+                                self.compiler.ldflags_shared_debug]:
+                    if '/MANIFEST' not in ldflags:
+                        ldflags.append('/MANIFEST')
 
         if not isinstance(self.fcompiler, FCompiler):
             self.fcompiler = new_fcompiler(compiler=self.fcompiler,
@@ -79,15 +85,15 @@ class was %s
                     self.fcompiler.customize_cmd(self)
                     self.fcompiler.show_customization()
 
-    def _wrap_method(self,mth,lang,args):
+    def _wrap_method(self, mth, lang, args):
         from distutils.ccompiler import CompileError
         from distutils.errors import DistutilsExecError
         save_compiler = self.compiler
-        if lang in ['f77','f90']:
+        if lang in ['f77', 'f90']:
             self.compiler = self.fcompiler
         try:
             ret = mth(*((self,)+args))
-        except (DistutilsExecError,CompileError):
+        except (DistutilsExecError, CompileError):
             msg = str(get_exception())
             self.compiler = save_compiler
             raise CompileError
@@ -95,7 +101,7 @@ class was %s
         return ret
 
     def _compile (self, body, headers, include_dirs, lang):
-        return self._wrap_method(old_config._compile,lang,
+        return self._wrap_method(old_config._compile, lang,
                                  (body, headers, include_dirs, lang))
 
     def _link (self, body,
@@ -104,14 +110,14 @@ class was %s
         if self.compiler.compiler_type=='msvc':
             libraries = (libraries or [])[:]
             library_dirs = (library_dirs or [])[:]
-            if lang in ['f77','f90']:
+            if lang in ['f77', 'f90']:
                 lang = 'c' # always use system linker when using MSVC compiler
                 if self.fcompiler:
                     for d in self.fcompiler.library_dirs or []:
                         # correct path when compiling in Cygwin but with
                         # normal Win Python
                         if d.startswith('/usr/lib'):
-                            s,o = exec_command(['cygpath', '-w', d],
+                            s, o = exec_command(['cygpath', '-w', d],
                                                use_tee=False)
                             if not s: d = o
                         library_dirs.append(d)
@@ -122,7 +128,7 @@ class was %s
                 if libname.startswith('msvc'): continue
                 fileexists = False
                 for libdir in library_dirs or []:
-                    libfile = os.path.join(libdir,'%s.lib' % (libname))
+                    libfile = os.path.join(libdir, '%s.lib' % (libname))
                     if os.path.isfile(libfile):
                         fileexists = True
                         break
@@ -130,11 +136,11 @@ class was %s
                 # make g77-compiled static libs available to MSVC
                 fileexists = False
                 for libdir in library_dirs:
-                    libfile = os.path.join(libdir,'lib%s.a' % (libname))
+                    libfile = os.path.join(libdir, 'lib%s.a' % (libname))
                     if os.path.isfile(libfile):
                         # copy libname.a file to name.lib so that MSVC linker
                         # can find it
-                        libfile2 = os.path.join(libdir,'%s.lib' % (libname))
+                        libfile2 = os.path.join(libdir, '%s.lib' % (libname))
                         copy_file(libfile, libfile2)
                         self.temp_files.append(libfile2)
                         fileexists = True
@@ -144,21 +150,21 @@ class was %s
                          % (libname, library_dirs))
         elif self.compiler.compiler_type == 'mingw32':
             generate_manifest(self)
-        return self._wrap_method(old_config._link,lang,
+        return self._wrap_method(old_config._link, lang,
                                  (body, headers, include_dirs,
                                   libraries, library_dirs, lang))
 
     def check_header(self, header, include_dirs=None, library_dirs=None, lang='c'):
         self._check_compiler()
         return self.try_compile(
-                "/* we need a dummy line to make distutils happy */", 
+                "/* we need a dummy line to make distutils happy */",
                 [header], include_dirs)
 
     def check_decl(self, symbol,
                    headers=None, include_dirs=None):
         self._check_compiler()
         body = """
-int main()
+int main(void)
 {
 #ifndef %s
     (void) %s;
@@ -173,7 +179,7 @@ int main()
                          headers=None, include_dirs=None):
         self._check_compiler()
         body = """
-int main()
+int main(void)
 {
 #if %s
 #else
@@ -193,7 +199,7 @@ int main()
 
         # First check the type can be compiled
         body = r"""
-int main() {
+int main(void) {
   if ((%(name)s *) 0)
     return 0;
   if (sizeof (%(name)s))
@@ -221,7 +227,7 @@ int main() {
         # First check the type can be compiled
         body = r"""
 typedef %(type)s npy_check_sizeof_type;
-int main ()
+int main (void)
 {
     static int test_array [1 - 2 * !(((long) (sizeof (npy_check_sizeof_type))) >= 0)];
     test_array [0] = 0
@@ -237,7 +243,7 @@ int main ()
         if expected:
             body = r"""
 typedef %(type)s npy_check_sizeof_type;
-int main ()
+int main (void)
 {
     static int test_array [1 - 2 * !(((long) (sizeof (npy_check_sizeof_type))) == %(size)s)];
     test_array [0] = 0
@@ -258,7 +264,7 @@ int main ()
         # this fails to *compile* if size > sizeof(type)
         body = r"""
 typedef %(type)s npy_check_sizeof_type;
-int main ()
+int main (void)
 {
     static int test_array [1 - 2 * !(((long) (sizeof (npy_check_sizeof_type))) <= %(size)s)];
     test_array [0] = 0
@@ -306,7 +312,10 @@ int main ()
         self._check_compiler()
         body = []
         if decl:
-            body.append("int %s (void);" % func)
+            if type(decl) == str:
+                body.append(decl)
+            else:
+                body.append("int %s (void);" % func)
         # Handle MSVC intrinsics: force MS compiler to make a function call.
         # Useful to test for some functions when built with optimization on, to
         # avoid build error because the intrinsic and our 'fake' test
@@ -339,7 +348,7 @@ int main ()
 
         Arguments
         ---------
-        funcs: seq
+        funcs : seq
             list of functions to test
         include_dirs : seq
             list of header paths
@@ -394,53 +403,21 @@ int main ()
         otherwise."""
         return check_inline(self)
 
+    def check_restrict(self):
+        """Return the restrict keyword recognized by the compiler, empty string
+        otherwise."""
+        return check_restrict(self)
+
     def check_compiler_gcc4(self):
         """Return True if the C compiler is gcc >= 4."""
         return check_compiler_gcc4(self)
 
-    def get_output(self, body, headers=None, include_dirs=None,
-                   libraries=None, library_dirs=None,
-                   lang="c"):
-        """Try to compile, link to an executable, and run a program
-        built from 'body' and 'headers'. Returns the exit status code
-        of the program and its output.
-        """
-        warnings.warn("\n+++++++++++++++++++++++++++++++++++++++++++++++++\n" \
-                      "Usage of get_output is deprecated: please do not \n" \
-                      "use it anymore, and avoid configuration checks \n" \
-                      "involving running executable on the target machine.\n" \
-                      "+++++++++++++++++++++++++++++++++++++++++++++++++\n",
-                      DeprecationWarning)
-        from distutils.ccompiler import CompileError, LinkError
-        self._check_compiler()
-        exitcode, output = 255, ''
-        try:
-            grabber = GrabStdout()
-            try:
-                src, obj, exe = self._link(body, headers, include_dirs,
-                                           libraries, library_dirs, lang)
-                grabber.restore()
-            except:
-                output = grabber.data
-                grabber.restore()
-                raise
-            exe = os.path.join('.', exe)
-            exitstatus, output = exec_command(exe, execute_in='.')
-            if hasattr(os, 'WEXITSTATUS'):
-                exitcode = os.WEXITSTATUS(exitstatus)
-                if os.WIFSIGNALED(exitstatus):
-                    sig = os.WTERMSIG(exitstatus)
-                    log.error('subprocess exited with signal %d' % (sig,))
-                    if sig == signal.SIGINT:
-                        # control-C
-                        raise KeyboardInterrupt
-            else:
-                exitcode = exitstatus
-            log.info("success!")
-        except (CompileError, LinkError):
-            log.info("failure.")
-        self._clean()
-        return exitcode, output
+    def check_gcc_function_attribute(self, attribute, name):
+        return check_gcc_function_attribute(self, attribute, name)
+
+    def check_gcc_variable_attribute(self, attribute):
+        return check_gcc_variable_attribute(self, attribute)
+
 
 class GrabStdout(object):
 

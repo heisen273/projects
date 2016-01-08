@@ -1,6 +1,18 @@
+from __future__ import (absolute_import, division, print_function,
+                        unicode_literals)
+
+from matplotlib.externals import six
+from matplotlib.externals.six.moves import xrange
+import warnings
+
 import numpy as np
 from matplotlib.testing.decorators import image_comparison, knownfailureif
-from matplotlib.delaunay.triangulate import Triangulation
+from matplotlib.cbook import MatplotlibDeprecationWarning
+
+with warnings.catch_warnings():
+    # the module is deprecated. The tests should be removed when the module is.
+    warnings.simplefilter('ignore', MatplotlibDeprecationWarning)
+    from matplotlib.delaunay.triangulate import Triangulation
 from matplotlib import pyplot as plt
 import matplotlib as mpl
 
@@ -159,16 +171,17 @@ class NNTester(LinearTester):
         z = func(self.x, self.y)
         return self.tri.nn_extrapolator(z, bbox=self.xrange+self.yrange)
 
-def make_all_testfuncs(allfuncs=allfuncs):
+def make_all_2d_testfuncs(allfuncs=allfuncs):
     def make_test(func):
         filenames = [
-            '%s-%s' % (func.func_name, x) for x in
+            '%s-%s' % (func.__name__, x) for x in
             ['ref-img', 'nn-img', 'lin-img', 'ref-con', 'nn-con', 'lin-con']]
 
         # We only generate PNGs to save disk space -- we just assume
         # that any backend differences are caught by other tests.
         @image_comparison(filenames, extensions=['png'],
-                          freetype_version=('2.4.5', '2.4.9'))
+                          freetype_version=('2.4.5', '2.4.9'),
+                          remove_text=True)
         def reference_test():
             nnt.plot(func, interp=False, plotter='imshow')
             nnt.plot(func, interp=True, plotter='imshow')
@@ -178,12 +191,35 @@ def make_all_testfuncs(allfuncs=allfuncs):
             lpt.plot(func, interp=True, plotter='contour')
 
         tester = reference_test
-        tester.__name__ = 'test_%s' % func.func_name
+        tester.__name__ = str('test_%s' % func.__name__)
         return tester
 
     nnt = NNTester(npoints=1000)
     lpt = LinearTester(npoints=1000)
     for func in allfuncs:
-        globals()['test_%s' % func.func_name] = make_test(func)
+        globals()['test_%s' % func.__name__] = make_test(func)
 
-make_all_testfuncs()
+make_all_2d_testfuncs()
+
+# 1d and 0d grid tests
+
+ref_interpolator = Triangulation([0,10,10,0],
+                                 [0,0,10,10]).linear_interpolator([1,10,5,2.0])
+
+def test_1d_grid():
+    res = ref_interpolator[3:6:2j,1:1:1j]
+    assert np.allclose(res, [[1.6],[1.9]], rtol=0)
+
+def test_0d_grid():
+    res = ref_interpolator[3:3:1j,1:1:1j]
+    assert np.allclose(res, [[1.6]], rtol=0)
+
+@image_comparison(baseline_images=['delaunay-1d-interp'], extensions=['png'])
+def test_1d_plots():
+    x_range = slice(0.25,9.75,20j)
+    x = np.mgrid[x_range]
+    ax = plt.gca()
+    for y in xrange(2,10,2):
+        plt.plot(x, ref_interpolator[x_range,y:y:1j])
+    ax.set_xticks([])
+    ax.set_yticks([])

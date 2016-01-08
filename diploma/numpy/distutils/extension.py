@@ -4,15 +4,20 @@ Provides the Extension class, used to describe C/C++ extension
 modules in setup scripts.
 
 Overridden to support f2py.
+
 """
+from __future__ import division, absolute_import, print_function
 
-__revision__ = "$Id: extension.py,v 1.1 2005/04/09 19:29:34 pearu Exp $"
-
+import sys
+import re
 from distutils.extension import Extension as old_Extension
 
-import re
-cxx_ext_re = re.compile(r'.*[.](cpp|cxx|cc)\Z',re.I).match
-fortran_pyf_ext_re = re.compile(r'.*[.](f90|f95|f77|for|ftn|f|pyf)\Z',re.I).match
+if sys.version_info[0] >= 3:
+    basestring = str
+
+
+cxx_ext_re = re.compile(r'.*[.](cpp|cxx|cc)\Z', re.I).match
+fortran_pyf_ext_re = re.compile(r'.*[.](f90|f95|f77|for|ftn|f|pyf)\Z', re.I).match
 
 class Extension(old_Extension):
     def __init__ (self, name, sources,
@@ -34,7 +39,7 @@ class Extension(old_Extension):
                   extra_f77_compile_args=None,
                   extra_f90_compile_args=None,
                  ):
-        old_Extension.__init__(self,name, [],
+        old_Extension.__init__(self, name, [],
                                include_dirs,
                                define_macros,
                                undef_macros,
@@ -67,7 +72,7 @@ class Extension(old_Extension):
         self.module_dirs = module_dirs or []
         self.extra_f77_compile_args = extra_f77_compile_args or []
         self.extra_f90_compile_args = extra_f90_compile_args or []
-        
+
         return
 
     def has_cxx_sources(self):

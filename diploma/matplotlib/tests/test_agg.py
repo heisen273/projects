@@ -1,9 +1,75 @@
+from __future__ import (absolute_import, division, print_function,
+                        unicode_literals)
+
+from matplotlib.externals import six
+
+import io
 import os
+
+import numpy as np
+from numpy.testing import assert_array_almost_equal
+
+from matplotlib.image import imread
+from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
+from matplotlib.figure import Figure
+from matplotlib.testing.decorators import cleanup
+from matplotlib import pyplot as plt
+from matplotlib import collections
+from matplotlib import path
+
+
+@cleanup
+def test_repeated_save_with_alpha():
+    # We want an image which has a background color of bluish green, with an
+    # alpha of 0.25.
+
+    fig = Figure([1, 0.4])
+    canvas = FigureCanvas(fig)
+    fig.set_facecolor((0, 1, 0.4))
+    fig.patch.set_alpha(0.25)
+
+    # The target color is fig.patch.get_facecolor()
+
+    buf = io.BytesIO()
+
+    fig.savefig(buf,
+                facecolor=fig.get_facecolor(),
+                edgecolor='none')
+
+    # Save the figure again to check that the
+    # colors don't bleed from the previous renderer.
+    buf.seek(0)
+    fig.savefig(buf,
+                facecolor=fig.get_facecolor(),
+                edgecolor='none')
+
+    # Check the first pixel has the desired color & alpha
+    # (approx: 0, 1.0, 0.4, 0.25)
+    buf.seek(0)
+    assert_array_almost_equal(tuple(imread(buf)[0, 0]),
+                              (0.0, 1.0, 0.4, 0.250),
+                              decimal=3)
+
+
+@cleanup
+def test_large_single_path_collection():
+    buff = io.BytesIO()
+
+    # Generates a too-large single path in a path collection that
+    # would cause a segfault if the draw_markers optimization is
+    # applied.
+    f, ax = plt.subplots()
+    collection = collections.PathCollection(
+        [path.Path([[-10, 5], [10, 5], [10, -5], [-10, -5], [-10, 5]])])
+    ax.add_artist(collection)
+    ax.set_xlim(10**-3, 1)
+    plt.savefig(buff)
+
 
 def report_memory(i):
     pid = os.getpid()
     a2 = os.popen('ps -p %d -o rss,sz' % pid).readlines()
-    print i, '  ', a2[1],
+    print(i, '  ', a2[1], end=' ')
     return int(a2[1].split()[0])
 
 # This test is disabled -- it uses old API. -ADS 2009-09-07
@@ -56,9 +122,39 @@ def report_memory(i):
 ##     avgMem = (end - start) / float(N)
 ##     print 'Average memory consumed per loop: %1.4f\n' % (avgMem)
 
-##     #TODO: Verify the expected mem usage and approximate tolerance that should be used
+##     #TODO: Verify the expected mem usage and approximate tolerance that
+##     # should be used
 ##     #self.checkClose( 0.32, avgMem, absTol = 0.1 )
 
 ##     # w/o text and w/o write_png: Average memory consumed per loop: 0.02
 ##     # w/o text and w/ write_png : Average memory consumed per loop: 0.3400
 ##     # w/ text and w/ write_png  : Average memory consumed per loop: 0.32
+
+
+@cleanup
+def test_marker_with_nan():
+    # This creates a marker with nans in it, which was segfaulting the
+    # Agg backend (see #3722)
+    fig, ax = plt.subplots(1)
+    steps = 1000
+    data = np.arange(steps)
+    ax.semilogx(data)
+    ax.fill_between(data, data*0.8, data*1.2)
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png')
+
+
+@cleanup
+def test_long_path():
+    buff = io.BytesIO()
+
+    fig, ax = plt.subplots()
+    np.random.seed(0)
+    points = np.random.rand(70000)
+    ax.plot(points)
+    fig.savefig(buff, format='png')
+
+
+if __name__ == "__main__":
+    import nose
+    nose.runmodule(argv=['-s', '--with-doctest'], exit=False)

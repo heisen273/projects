@@ -1,4 +1,7 @@
-from __future__ import division
+from __future__ import (absolute_import, division, print_function,
+                        unicode_literals)
+
+from matplotlib.externals import six
 
 import os
 import numpy
@@ -13,18 +16,19 @@ from matplotlib.figure import Figure
 from matplotlib.path import Path
 from matplotlib.mathtext import MathTextParser
 from matplotlib.colors import colorConverter
-
+from matplotlib import rcParams
 
 from matplotlib.widgets import SubplotTool
 
 import matplotlib
 from matplotlib.backends import _macosx
 
+
 class Show(ShowBase):
     def mainloop(self):
         _macosx.show()
-
 show = Show()
+
 
 class RendererMac(RendererBase):
     """
@@ -41,6 +45,7 @@ class RendererMac(RendererBase):
         self.width = width
         self.height = height
         self.gc = GraphicsContextMac()
+        self.gc.set_dpi(self.dpi)
         self.mathtext_parser = MathTextParser('MacOSX')
 
     def set_width_height (self, width, height):
@@ -48,55 +53,47 @@ class RendererMac(RendererBase):
 
     def draw_path(self, gc, path, transform, rgbFace=None):
         if rgbFace is not None:
-            rgbFace = tuple(rgbFace[:3])
+            rgbFace = tuple(rgbFace)
         linewidth = gc.get_linewidth()
         gc.draw_path(path, transform, linewidth, rgbFace)
 
     def draw_markers(self, gc, marker_path, marker_trans, path, trans, rgbFace=None):
         if rgbFace is not None:
-            rgbFace = tuple(rgbFace[:3])
+            rgbFace = tuple(rgbFace)
         linewidth = gc.get_linewidth()
         gc.draw_markers(marker_path, marker_trans, path, trans, linewidth, rgbFace)
 
     def draw_path_collection(self, gc, master_transform, paths, all_transforms,
                              offsets, offsetTrans, facecolors, edgecolors,
-                             linewidths, linestyles, antialiaseds, urls):
-        cliprect = gc.get_clip_rectangle()
-        clippath, clippath_transform = gc.get_clip_path()
-        if all_transforms:
-            transforms = [numpy.dot(master_transform, t) for t in all_transforms]
+                             linewidths, linestyles, antialiaseds, urls,
+                             offset_position):
+        if offset_position=='data':
+            offset_position = True
         else:
-            transforms = [master_transform]
-        gc.draw_path_collection(cliprect,
-                                clippath,
-                                clippath_transform,
-                                paths,
-                                transforms,
-                                offsets,
-                                offsetTrans,
-                                facecolors,
-                                edgecolors,
-                                linewidths,
-                                linestyles,
-                                antialiaseds)
+            offset_position = False
+        path_ids = []
+        for path, transform in self._iter_collection_raw_paths(
+            master_transform, paths, all_transforms):
+            path_ids.append((path, transform))
+        master_transform = master_transform.get_matrix()
+        offsetTrans = offsetTrans.get_matrix()
+        gc.draw_path_collection(master_transform, path_ids, all_transforms,
+                             offsets, offsetTrans, facecolors, edgecolors,
+                             linewidths, linestyles, antialiaseds,
+                             offset_position)
 
     def draw_quad_mesh(self, gc, master_transform, meshWidth, meshHeight,
                        coordinates, offsets, offsetTrans, facecolors,
-                       antialiased, showedges):
-        cliprect = gc.get_clip_rectangle()
-        clippath, clippath_transform = gc.get_clip_path()
-        gc.draw_quad_mesh(master_transform,
-                          cliprect,
-                          clippath,
-                          clippath_transform,
+                       antialiased, edgecolors):
+        gc.draw_quad_mesh(master_transform.get_matrix(),
                           meshWidth,
                           meshHeight,
                           coordinates,
                           offsets,
-                          offsetTrans,
+                          offsetTrans.get_matrix(),
                           facecolors,
                           antialiased,
-                          showedges)
+                          edgecolors)
 
     def new_gc(self):
         self.gc.save()
@@ -109,40 +106,52 @@ class RendererMac(RendererBase):
         points = transform.transform(points)
         gc.draw_gouraud_triangle(points, colors)
 
-    def draw_image(self, gc, x, y, im):
-        im.flipud_out()
-        nrows, ncols, data = im.as_rgba_str()
-        gc.draw_image(x, y, nrows, ncols, data, gc.get_clip_rectangle(),
-                      *gc.get_clip_path())
-        im.flipud_out()
+    def get_image_magnification(self):
+        return self.gc.get_image_magnification()
 
-    def draw_tex(self, gc, x, y, s, prop, angle):
+    def draw_image(self, gc, x, y, im):
+        nrows, ncols, data = im.as_rgba_str()
+        gc.draw_image(x, y, nrows, ncols, data)
+
+    def draw_tex(self, gc, x, y, s, prop, angle, ismath='TeX!', mtext=None):
         # todo, handle props, angle, origins
+        scale = self.gc.get_image_magnification()
         size = prop.get_size_in_points()
         texmanager = self.get_texmanager()
         key = s, size, self.dpi, angle, texmanager.get_font_config()
         im = self.texd.get(key) # Not sure what this does; just copied from backend_agg.py
         if im is None:
-            Z = texmanager.get_grey(s, size, self.dpi)
+            Z = texmanager.get_grey(s, size, self.dpi*scale)
             Z = numpy.array(255.0 - Z * 255.0, numpy.uint8)
 
         gc.draw_mathtext(x, y, angle, Z)
 
     def _draw_mathtext(self, gc, x, y, s, prop, angle):
+        scale = self.gc.get_image_magnification()
         ox, oy, width, height, descent, image, used_characters = \
-            self.mathtext_parser.parse(s, self.dpi, prop)
+            self.mathtext_parser.parse(s, self.dpi*scale, prop)
+        descent /= scale
+        xd = descent * numpy.sin(numpy.deg2rad(angle))
+        yd = descent * numpy.cos(numpy.deg2rad(angle))
+        x = numpy.round(x + ox + xd)
+        y = numpy.round(y + oy - yd)
         gc.draw_mathtext(x, y, angle, 255 - image.as_array())
 
-    def draw_text(self, gc, x, y, s, prop, angle, ismath=False):
+    def draw_text(self, gc, x, y, s, prop, angle, ismath=False, mtext=None):
         if ismath:
-           self._draw_mathtext(gc, x, y, s, prop, angle)
+            self._draw_mathtext(gc, x, y, s, prop, angle)
         else:
             family =  prop.get_family()
             weight = prop.get_weight()
+            # transform weight into string for the native backend
+            if weight >= 700:
+                weight = 'bold'
+            else:
+                weight = 'normal'
             style = prop.get_style()
             points = prop.get_size_in_points()
             size = self.points_to_pixels(points)
-            gc.draw_text(x, y, unicode(s), family, size, weight, style, angle)
+            gc.draw_text(x, y, six.text_type(s), family, size, weight, style, angle)
 
     def get_text_width_height_descent(self, s, prop, ismath):
         if ismath=='TeX':
@@ -158,11 +167,17 @@ class RendererMac(RendererBase):
             return width, height, descent
         family =  prop.get_family()
         weight = prop.get_weight()
+        # transform weight into string for the native backend
+        if weight >= 700:
+            weight = 'bold'
+        else:
+            weight = 'normal'
         style = prop.get_style()
         points = prop.get_size_in_points()
         size = self.points_to_pixels(points)
-        width, height, descent = self.gc.get_text_width_height_descent(unicode(s), family, size, weight, style)
-        return  width, height, 0.0*descent
+        width, height, descent = self.gc.get_text_width_height_descent(
+            six.text_type(s), family, size, weight, style)
+        return  width, height, descent
 
     def flipy(self):
         return False
@@ -172,6 +187,7 @@ class RendererMac(RendererBase):
 
     def option_image_nocomposite(self):
         return True
+
 
 class GraphicsContextMac(_macosx.GraphicsContext, GraphicsContextBase):
     """
@@ -188,12 +204,14 @@ class GraphicsContextMac(_macosx.GraphicsContext, GraphicsContextBase):
     def set_alpha(self, alpha):
         GraphicsContextBase.set_alpha(self, alpha)
         _alpha = self.get_alpha()
-        _macosx.GraphicsContext.set_alpha(self, _alpha)
-
-    def set_foreground(self, fg, isRGB=False):
-        GraphicsContextBase.set_foreground(self, fg, isRGB)
+        _macosx.GraphicsContext.set_alpha(self, _alpha, self.get_forced_alpha())
         rgb = self.get_rgb()
-        _macosx.GraphicsContext.set_foreground(self, rgb[:3])
+        _macosx.GraphicsContext.set_foreground(self, rgb)
+
+    def set_foreground(self, fg, isRGBA=False):
+        GraphicsContextBase.set_foreground(self, fg, isRGBA)
+        rgb = self.get_rgb()
+        _macosx.GraphicsContext.set_foreground(self, rgb)
 
     def set_graylevel(self, fg):
         GraphicsContextBase.set_graylevel(self, fg)
@@ -210,6 +228,7 @@ class GraphicsContextMac(_macosx.GraphicsContext, GraphicsContextBase):
         path = path.get_fully_transformed_path()
         _macosx.GraphicsContext.set_clip_path(self, path)
 
+
 ########################################################################
 #
 # The following functions and classes are for pylab and implement
@@ -224,7 +243,7 @@ def draw_if_interactive():
     it will be redrawn as soon as the event loop resumes via PyOS_InputHook.
     This function should be called after each draw event, even if
     matplotlib is not running interactively.
-	"""
+    """
     if matplotlib.is_interactive():
         figManager =  Gcf.get_active()
         if figManager is not None:
@@ -235,14 +254,19 @@ def new_figure_manager(num, *args, **kwargs):
     """
     Create a new figure manager instance
     """
-    if not _macosx.verify_main_display():
-        import warnings
-        warnings.warn("Python is not installed as a framework. The MacOSX backend may not work correctly if Python is not installed as a framework. Please see the Python documentation for more information on installing Python as a framework on Mac OS X")
     FigureClass = kwargs.pop('FigureClass', Figure)
     figure = FigureClass(*args, **kwargs)
+    return new_figure_manager_given_figure(num, figure)
+
+
+def new_figure_manager_given_figure(num, figure):
+    """
+    Create a new figure manager instance for the given figure.
+    """
     canvas = FigureCanvasMac(figure)
     manager = FigureManagerMac(canvas, num)
     return manager
+
 
 class TimerMac(_macosx.Timer, TimerBase):
     '''
@@ -259,7 +283,6 @@ class TimerMac(_macosx.Timer, TimerBase):
         functions add_callback and remove_callback can be used.
     '''
     # completely implemented at the C-level (in _macosx.Timer)
-
 
 
 class FigureCanvasMac(_macosx.FigureCanvas, FigureCanvasBase):
@@ -291,12 +314,16 @@ class FigureCanvasMac(_macosx.FigureCanvas, FigureCanvasBase):
         self.renderer = RendererMac(figure.dpi, width, height)
         _macosx.FigureCanvas.__init__(self, width, height)
 
+    def draw_idle(self, *args, **kwargs):
+        self.invalidate()
+
     def resize(self, width, height):
         self.renderer.set_width_height(width, height)
         dpi = self.figure.dpi
         width /= dpi
         height /= dpi
         self.figure.set_size_inches(width, height)
+        FigureCanvasBase.resize_event(self)
 
     def _print_bitmap(self, filename, *args, **kwargs):
         # In backend_bases.py, print_figure changes the dpi of the figure.
@@ -307,8 +334,8 @@ class FigureCanvasMac(_macosx.FigureCanvas, FigureCanvasBase):
         self.figure.dpi = self.renderer.dpi
         width, height = self.figure.get_size_inches()
         width, height = width*dpi, height*dpi
-        filename = unicode(filename)
-        self.write_bitmap(filename, width, height)
+        filename = six.text_type(filename)
+        self.write_bitmap(filename, width, height, dpi)
         self.figure.dpi = old_dpi
 
     def print_bmp(self, filename, *args, **kwargs):
@@ -329,9 +356,6 @@ class FigureCanvasMac(_macosx.FigureCanvas, FigureCanvasBase):
     def print_gif(self, filename, *args, **kwargs):
         self._print_bitmap(filename, *args, **kwargs)
 
-    def get_default_filetype(self):
-        return 'png'
-
     def new_timer(self, *args, **kwargs):
         """
         Creates a new backend-specific subclass of :class:`backend_bases.Timer`.
@@ -348,6 +372,7 @@ class FigureCanvasMac(_macosx.FigureCanvas, FigureCanvasBase):
         """
         return TimerMac(*args, **kwargs)
 
+
 class FigureManagerMac(_macosx.FigureManager, FigureManagerBase):
     """
     Wrap everything up into a window for the pylab interface
@@ -356,9 +381,7 @@ class FigureManagerMac(_macosx.FigureManager, FigureManagerBase):
         FigureManagerBase.__init__(self, canvas, num)
         title = "Figure %d" % num
         _macosx.FigureManager.__init__(self, canvas, title)
-        if matplotlib.rcParams['toolbar']=='classic':
-            self.toolbar = NavigationToolbarMac(canvas)
-        elif matplotlib.rcParams['toolbar']=='toolbar2':
+        if rcParams['toolbar']=='toolbar2':
             self.toolbar = NavigationToolbar2Mac(canvas)
         else:
             self.toolbar = None
@@ -370,81 +393,13 @@ class FigureManagerMac(_macosx.FigureManager, FigureManagerBase):
             if self.toolbar != None: self.toolbar.update()
         self.canvas.figure.add_axobserver(notify_axes_change)
 
-        # This is ugly, but this is what tkagg and gtk are doing.
-        # It is needed to get ginput() working.
-        self.canvas.figure.show = lambda *args: self.show()
         if matplotlib.is_interactive():
             self.show()
+            self.canvas.draw_idle()
 
     def close(self):
         Gcf.destroy(self.num)
 
-class NavigationToolbarMac(_macosx.NavigationToolbar):
-
-    def __init__(self, canvas):
-        self.canvas = canvas
-        basedir = os.path.join(matplotlib.rcParams['datapath'], "images")
-        images = {}
-        for imagename in ("stock_left",
-                          "stock_right",
-                          "stock_up",
-                          "stock_down",
-                          "stock_zoom-in",
-                          "stock_zoom-out",
-                          "stock_save_as"):
-            filename = os.path.join(basedir, imagename+".ppm")
-            images[imagename] = self._read_ppm_image(filename)
-        _macosx.NavigationToolbar.__init__(self, images)
-        self.message = None
-
-    def _read_ppm_image(self, filename):
-        data = ""
-        imagefile = open(filename)
-        for line in imagefile:
-            if "#" in line:
-                i = line.index("#")
-                line = line[:i] + "\n"
-            data += line
-        imagefile.close()
-        magic, width, height, maxcolor, imagedata = data.split(None, 4)
-        width, height = int(width), int(height)
-        assert magic=="P6"
-        assert len(imagedata)==width*height*3 # 3 colors in RGB
-        return (width, height, imagedata)
-
-    def panx(self, direction):
-        axes = self.canvas.figure.axes
-        selected = self.get_active()
-        for i in selected:
-            axes[i].xaxis.pan(direction)
-        self.canvas.invalidate()
-
-    def pany(self, direction):
-        axes = self.canvas.figure.axes
-        selected = self.get_active()
-        for i in selected:
-            axes[i].yaxis.pan(direction)
-        self.canvas.invalidate()
-
-    def zoomx(self, direction):
-        axes = self.canvas.figure.axes
-        selected = self.get_active()
-        for i in selected:
-            axes[i].xaxis.zoom(direction)
-        self.canvas.invalidate()
-
-    def zoomy(self, direction):
-        axes = self.canvas.figure.axes
-        selected = self.get_active()
-        for i in selected:
-            axes[i].yaxis.zoom(direction)
-        self.canvas.invalidate()
-
-    def save_figure(self, *args):
-        filename = _macosx.choose_save_file('Save the figure')
-        if filename is None: # Cancel
-            return
-        self.canvas.print_figure(filename)
 
 class NavigationToolbar2Mac(_macosx.NavigationToolbar2, NavigationToolbar2):
 
@@ -452,7 +407,7 @@ class NavigationToolbar2Mac(_macosx.NavigationToolbar2, NavigationToolbar2):
         NavigationToolbar2.__init__(self, canvas)
 
     def _init_toolbar(self):
-        basedir = os.path.join(matplotlib.rcParams['datapath'], "images")
+        basedir = os.path.join(rcParams['datapath'], "images")
         _macosx.NavigationToolbar2.__init__(self, basedir)
 
     def draw_rubberband(self, event, x0, y0, x1, y1):
@@ -465,7 +420,8 @@ class NavigationToolbar2Mac(_macosx.NavigationToolbar2, NavigationToolbar2):
         _macosx.set_cursor(cursor)
 
     def save_figure(self, *args):
-        filename = _macosx.choose_save_file('Save the figure')
+        filename = _macosx.choose_save_file('Save the figure',
+                                            self.canvas.get_default_filename())
         if filename is None: # Cancel
             return
         self.canvas.print_figure(filename)
@@ -480,11 +436,14 @@ class NavigationToolbar2Mac(_macosx.NavigationToolbar2, NavigationToolbar2):
     def set_message(self, message):
         _macosx.NavigationToolbar2.set_message(self, message.encode('utf-8'))
 
+    def dynamic_update(self):
+        self.canvas.draw_idle()
+
 ########################################################################
 #
 # Now just provide the standard names that backend.__init__ is expecting
 #
 ########################################################################
 
-
+FigureCanvas = FigureCanvasMac
 FigureManager = FigureManagerMac

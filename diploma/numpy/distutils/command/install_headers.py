@@ -1,3 +1,5 @@
+from __future__ import division, absolute_import, print_function
+
 import os
 from distutils.command.install_headers import install_headers as old_install_headers
 
@@ -10,7 +12,7 @@ class install_headers (old_install_headers):
 
         prefix = os.path.dirname(self.install_dir)
         for header in headers:
-            if isinstance(header,tuple):
+            if isinstance(header, tuple):
                 # Kind of a hack, but I don't know where else to change this...
                 if header[0] == 'numpy.core':
                     header = ('numpy', header[1])

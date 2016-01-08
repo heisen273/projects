@@ -1,14 +1,14 @@
+from __future__ import division, absolute_import, print_function
+
+import numpy as np
+from .numeric import uint8, ndarray, dtype
+from numpy.compat import long, basestring
+
 __all__ = ['memmap']
-
-import warnings
-from numeric import uint8, ndarray, dtype
-import sys
-
-from numpy.compat import asbytes
 
 dtypedescr = dtype
 valid_filemodes = ["r", "c", "r+", "w+"]
-writeable_filemodes = ["r+","w+"]
+writeable_filemodes = ["r+", "w+"]
 
 mode_equivalents = {
     "readonly":"r",
@@ -18,13 +18,24 @@ mode_equivalents = {
     }
 
 class memmap(ndarray):
-    """
-    Create a memory-map to an array stored in a *binary* file on disk.
+    """Create a memory-map to an array stored in a *binary* file on disk.
 
     Memory-mapped files are used for accessing small segments of large files
     on disk, without reading the entire file into memory.  Numpy's
     memmap's are array-like objects.  This differs from Python's ``mmap``
     module, which uses file-like objects.
+
+    This subclass of ndarray has some unpleasant interactions with
+    some operations, because it doesn't quite fit properly as a subclass.
+    An alternative to using this subclass is to create the ``mmap``
+    object yourself, then create an ndarray with ndarray.__new__ directly,
+    passing the object created in its 'buffer=' parameter.
+
+    This class may at some point be turned into a factory function
+    which returns a view into an mmap buffer.
+
+    Delete the memmap instance to close.
+
 
     Parameters
     ----------
@@ -51,14 +62,22 @@ class memmap(ndarray):
         Default is 'r+'.
     offset : int, optional
         In the file, array data starts at this offset. Since `offset` is
-        measured in bytes, it should be a multiple of the byte-size of
-        `dtype`. Requires ``shape=None``. The default is 0.
+        measured in bytes, it should normally be a multiple of the byte-size
+        of `dtype`. When ``mode != 'r'``, even positive offsets beyond end of
+        file are valid; The file will be extended to accommodate the
+        additional data. By default, ``memmap`` will start at the beginning of
+        the file, even if ``filename`` is a file pointer ``fp`` and
+        ``fp.tell() != 0``.
     shape : tuple, optional
-        The desired shape of the array. By default, the returned array will be
-        1-D with the number of elements determined by file size and data-type.
+        The desired shape of the array. If ``mode == 'r'`` and the number
+        of remaining bytes after `offset` is not a multiple of the byte-size
+        of `dtype`, you must specify `shape`. By default, the returned array
+        will be 1-D with the number of elements determined by file size
+        and data-type.
     order : {'C', 'F'}, optional
-        Specify the order of the ndarray memory layout: C (row-major) or
-        Fortran (column-major).  This only has an effect if the shape is
+        Specify the order of the ndarray memory layout:
+        :term:`row-major`, C-style or :term:`column-major`,
+        Fortran-style.  This only has an effect if the shape is
         greater than 1-D.  The default order is 'C'.
 
     Attributes
@@ -70,15 +89,13 @@ class memmap(ndarray):
     mode : str
         File mode.
 
-
     Methods
     -------
-    close
-        Close the memmap file.
     flush
         Flush any changes in memory to file on disk.
         When you delete a memmap object, flush is called first to write
         changes to disk before removing the object.
+
 
     Notes
     -----
@@ -90,6 +107,11 @@ class memmap(ndarray):
     (prior to Python 2.5) does not allow files to be larger than a
     certain size depending on the platform. This size is always < 2GB
     even on 64-bit systems.
+
+    When a memmap causes a file to be created or extended beyond its
+    current size in the filesystem, the contents of the new part are
+    unspecified. On systems with POSIX filesystem semantics, the extended
+    part will be filled with zero bytes.
 
     Examples
     --------
@@ -175,6 +197,7 @@ class memmap(ndarray):
     """
 
     __array_priority__ = -100.0
+
     def __new__(subtype, filename, dtype=uint8, mode='r+', offset=0,
                 shape=None, order='C'):
         # Import here to minimize 'import numpy' overhead
@@ -184,16 +207,18 @@ class memmap(ndarray):
             mode = mode_equivalents[mode]
         except KeyError:
             if mode not in valid_filemodes:
-                raise ValueError("mode must be one of %s" % \
-                                 (valid_filemodes + mode_equivalents.keys()))
+                raise ValueError("mode must be one of %s" %
+                                 (valid_filemodes + list(mode_equivalents.keys())))
 
-        if hasattr(filename,'read'):
+        if hasattr(filename, 'read'):
             fid = filename
+            own_file = False
         else:
             fid = open(filename, (mode == 'c' and 'r' or mode)+'b')
+            own_file = True
 
         if (mode == 'w+') and shape is None:
-            raise ValueError, "shape must be given"
+            raise ValueError("shape must be given")
 
         fid.seek(0, 2)
         flen = fid.tell()
@@ -204,8 +229,8 @@ class memmap(ndarray):
             bytes = flen - offset
             if (bytes % _dbytes):
                 fid.close()
-                raise ValueError, "Size of available data is not a "\
-                      "multiple of data-type size."
+                raise ValueError("Size of available data is not a "
+                        "multiple of the data-type size.")
             size = bytes // _dbytes
             shape = (size,)
         else:
@@ -219,7 +244,7 @@ class memmap(ndarray):
 
         if mode == 'w+' or (mode == 'r+' and flen < bytes):
             fid.seek(bytes - 1, 0)
-            fid.write(asbytes('\0'))
+            fid.write(np.compat.asbytes('\0'))
             fid.flush()
 
         if mode == 'c':
@@ -229,14 +254,10 @@ class memmap(ndarray):
         else:
             acc = mmap.ACCESS_WRITE
 
-        if sys.version_info[:2] >= (2,6):
-            # The offset keyword in mmap.mmap needs Python >= 2.6
-            start = offset - offset % mmap.ALLOCATIONGRANULARITY
-            bytes -= start
-            offset -= start
-            mm = mmap.mmap(fid.fileno(), bytes, access=acc, offset=start)
-        else:
-            mm = mmap.mmap(fid.fileno(), bytes, access=acc)
+        start = offset - offset % mmap.ALLOCATIONGRANULARITY
+        bytes -= start
+        offset -= start
+        mm = mmap.mmap(fid.fileno(), bytes, access=acc, offset=start)
 
         self = ndarray.__new__(subtype, shape, dtype=descr, buffer=mm,
             offset=offset, order=order)
@@ -246,19 +267,30 @@ class memmap(ndarray):
 
         if isinstance(filename, basestring):
             self.filename = os.path.abspath(filename)
-        elif hasattr(filename, "name"):
+        # py3 returns int for TemporaryFile().name
+        elif (hasattr(filename, "name") and
+              isinstance(filename.name, basestring)):
             self.filename = os.path.abspath(filename.name)
+        # same as memmap copies (e.g. memmap + 1)
+        else:
+            self.filename = None
+
+        if own_file:
+            fid.close()
 
         return self
 
     def __array_finalize__(self, obj):
-        if hasattr(obj, '_mmap'):
+        if hasattr(obj, '_mmap') and np.may_share_memory(self, obj):
             self._mmap = obj._mmap
             self.filename = obj.filename
             self.offset = obj.offset
             self.mode = obj.mode
         else:
             self._mmap = None
+            self.filename = None
+            self.offset = None
+            self.mode = None
 
     def flush(self):
         """
@@ -275,27 +307,5 @@ class memmap(ndarray):
         memmap
 
         """
-        if self._mmap is not None:
-            self._mmap.flush()
-
-    def _close(self):
-        """Close the memmap file.  Only do this when deleting the object."""
-        if self.base is self._mmap:
-            # The python mmap probably causes flush on close, but
-            # we put this here for safety
-            self._mmap.flush()
-            self._mmap.close()
-            self._mmap = None
-
-    def __del__(self):
-        # We first check if we are the owner of the mmap, rather than
-        # a view, so deleting a view does not call _close
-        # on the parent mmap
-        if self._mmap is self.base:
-            try:
-                # First run tell() to see whether file is open
-                self._mmap.tell()
-            except ValueError:
-                pass
-            else:
-                self._close()
+        if self.base is not None and hasattr(self.base, 'flush'):
+            self.base.flush()

@@ -1,11 +1,13 @@
+from __future__ import division, absolute_import, print_function
+
 import sys
+import re
+import os
+
 if sys.version_info[0] < 3:
     from ConfigParser import SafeConfigParser, NoOptionError
 else:
     from configparser import ConfigParser, SafeConfigParser, NoOptionError
-import re
-import os
-import shlex
 
 __all__ = ['FormatError', 'PkgNotFound', 'LibraryInfo', 'VariableSet',
         'read_config', 'parse_flags']
@@ -53,35 +55,23 @@ def parse_flags(line):
         * 'ignored'
 
     """
-    lexer = shlex.shlex(line)
-    lexer.whitespace_split = True
-
     d = {'include_dirs': [], 'library_dirs': [], 'libraries': [],
-            'macros': [], 'ignored': []}
-    def next_token(t):
-        if t.startswith('-I'):
-            if len(t) > 2:
-                d['include_dirs'].append(t[2:])
-            else:
-                t = lexer.get_token()
-                d['include_dirs'].append(t)
-        elif t.startswith('-L'):
-            if len(t) > 2:
-                d['library_dirs'].append(t[2:])
-            else:
-                t = lexer.get_token()
-                d['library_dirs'].append(t)
-        elif t.startswith('-l'):
-            d['libraries'].append(t[2:])
-        elif t.startswith('-D'):
-            d['macros'].append(t[2:])
-        else:
-            d['ignored'].append(t)
-        return lexer.get_token()
+         'macros': [], 'ignored': []}
 
-    t = lexer.get_token()
-    while t:
-        t = next_token(t)
+    flags = (' ' + line).split(' -')
+    for flag in flags:
+        flag = '-' + flag
+        if len(flag) > 0:
+            if flag.startswith('-I'):
+                d['include_dirs'].append(flag[2:].strip())
+            elif flag.startswith('-L'):
+                d['library_dirs'].append(flag[2:].strip())
+            elif flag.startswith('-l'):
+                d['libraries'].append(flag[2:].strip())
+            elif flag.startswith('-D'):
+                d['macros'].append(flag[2:].strip())
+            else:
+                d['ignored'].append(flag)
 
     return d
 
@@ -140,7 +130,7 @@ class LibraryInfo(object):
             The list of section headers.
 
         """
-        return self._sections.keys()
+        return list(self._sections.keys())
 
     def cflags(self, section="default"):
         val = self.vars.interpolate(self._sections[section]['cflags'])
@@ -219,7 +209,7 @@ class VariableSet(object):
             The names of all variables in the `VariableSet` instance.
 
         """
-        return self._raw_data.keys()
+        return list(self._raw_data.keys())
 
     # Emulate a dict to set/get variables values
     def __getitem__(self, name):
@@ -238,11 +228,11 @@ def parse_meta(config):
         d[name] = value
 
     for k in ['name', 'description', 'version']:
-        if not d.has_key(k):
+        if not k in d:
             raise FormatError("Option %s (section [meta]) is mandatory, "
                 "but not found" % k)
 
-    if not d.has_key('requires'):
+    if not 'requires' in d:
         d['requires'] = []
 
     return d
@@ -313,7 +303,7 @@ def _read_config_imp(filenames, dirs=None):
 
             # Update var dict for variables not in 'top' config file
             for k, v in nvars.items():
-                if not vars.has_key(k):
+                if not k in vars:
                     vars[k] = v
 
             # Update sec dict
@@ -328,7 +318,7 @@ def _read_config_imp(filenames, dirs=None):
     # FIXME: document this. If pkgname is defined in the variables section, and
     # there is no pkgdir variable defined, pkgdir is automatically defined to
     # the path of pkgname. This requires the package to be imported to work
-    if not vars.has_key("pkgdir") and vars.has_key("pkgname"):
+    if not 'pkgdir' in vars and "pkgname" in vars:
         pkgname = vars["pkgname"]
         if not pkgname in sys.modules:
             raise ValueError("You should import %s to get information on %s" %
@@ -426,7 +416,7 @@ if __name__ == '__main__':
         files = glob.glob("*.ini")
         for f in files:
             info = read_config(f)
-            print ("%s\t%s - %s" % (info.name, info.name, info.description))
+            print("%s\t%s - %s" % (info.name, info.name, info.description))
 
     pkg_name = args[1]
     import os
@@ -452,10 +442,10 @@ if __name__ == '__main__':
         info.vars[name] = value
 
     if options.cflags:
-        print (info.cflags(section))
+        print(info.cflags(section))
     if options.libs:
-        print (info.libs(section))
+        print(info.libs(section))
     if options.version:
-        print (info.version)
+        print(info.version)
     if options.min_version:
-        print (info.version >= options.min_version)
+        print(info.version >= options.min_version)

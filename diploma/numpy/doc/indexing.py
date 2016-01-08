@@ -1,5 +1,4 @@
-"""
-==============
+"""==============
 Array indexing
 ==============
 
@@ -50,7 +49,7 @@ than dimensions, one gets a subdimensional array. For example: ::
 
 That is, each index specified selects the array corresponding to the
 rest of the dimensions selected. In the above example, choosing 0
-means that remaining dimension of lenth 5 is being left unspecified,
+means that the remaining dimension of length 5 is being left unspecified,
 and that what is returned is an array of that dimensionality and size.
 It must be noted that the returned array is not a copy of the original,
 but points to the same values in memory as does the original array.
@@ -62,7 +61,7 @@ element being returned. That is: ::
     2
 
 So note that ``x[0,2] = x[0][2]`` though the second case is more
-inefficient a new temporary array is created after the first index
+inefficient as a new temporary array is created after the first index
 that is subsequently indexed by 2.
 
 Note to those used to IDL or Fortran memory order as it relates to
@@ -222,22 +221,25 @@ Boolean or "mask" index arrays
 
 Boolean arrays used as indices are treated in a different manner
 entirely than index arrays. Boolean arrays must be of the same shape
-as the array being indexed, or broadcastable to the same shape. In the
+as the initial dimensions of the array being indexed. In the
 most straightforward case, the boolean array has the same shape: ::
 
  >>> b = y>20
  >>> y[b]
  array([21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34])
 
-The result is a 1-D array containing all the elements in the indexed
-array corresponding to all the true elements in the boolean array. As
-with index arrays, what is returned is a copy of the data, not a view
-as one gets with slices.
+Unlike in the case of integer index arrays, in the boolean case, the
+result is a 1-D array containing all the elements in the indexed array
+corresponding to all the true elements in the boolean array. The
+elements in the indexed array are always iterated and returned in
+:term:`row-major` (C-style) order. The result is also identical to
+``y[np.nonzero(b)]``. As with index arrays, what is returned is a copy
+of the data, not a view as one gets with slices.
 
-With broadcasting, multidimensional arrays may be the result. For
-example: ::
+The result will be multidimensional if y has more dimensions than b.
+For example: ::
 
- >>> b[:,5] # use a 1-D boolean that broadcasts with y
+ >>> b[:,5] # use a 1-D boolean whose first dim agrees with the first dim of y
  array([False, False, False,  True,  True], dtype=bool)
  >>> y[b[:,5]]
  array([[21, 22, 23, 24, 25, 26, 27],
@@ -245,6 +247,35 @@ example: ::
 
 Here the 4th and 5th rows are selected from the indexed array and
 combined to make a 2-D array.
+
+In general, when the boolean array has fewer dimensions than the array
+being indexed, this is equivalent to y[b, ...], which means
+y is indexed by b followed by as many : as are needed to fill
+out the rank of y.
+Thus the shape of the result is one dimension containing the number
+of True elements of the boolean array, followed by the remaining
+dimensions of the array being indexed.
+
+For example, using a 2-D boolean array of shape (2,3)
+with four True elements to select rows from a 3-D array of shape
+(2,3,5) results in a 2-D result of shape (4,5): ::
+
+ >>> x = np.arange(30).reshape(2,3,5)
+ >>> x
+ array([[[ 0,  1,  2,  3,  4],
+         [ 5,  6,  7,  8,  9],
+         [10, 11, 12, 13, 14]],
+        [[15, 16, 17, 18, 19],
+         [20, 21, 22, 23, 24],
+         [25, 26, 27, 28, 29]]])
+ >>> b = np.array([[True, True, False], [False, True, True]])
+ >>> x[b]
+ array([[ 0,  1,  2,  3,  4],
+        [ 5,  6,  7,  8,  9],
+        [20, 21, 22, 23, 24],
+        [25, 26, 27, 28, 29]])
+
+For further details, consult the numpy reference documentation on array indexing.
 
 Combining index arrays with slices
 ==================================
@@ -405,3 +436,4 @@ converted to an array as a list would be. As an example: ::
  40
 
 """
+from __future__ import division, absolute_import, print_function

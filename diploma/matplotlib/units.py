@@ -1,9 +1,9 @@
 """
 The classes here provide support for using custom classes with
-matplotlib, eg those that do not expose the array interface but know
+matplotlib, e.g., those that do not expose the array interface but know
 how to converter themselves to arrays.  It also supoprts classes with
 units and units conversion.  Use cases include converters for custom
-objects, eg a list of datetime objects, as well as for objects that
+objects, e.g., a list of datetime objects, as well as for objects that
 are unit aware.  We don't assume any particular units implementation,
 rather a units implementation must provide a ConversionInterface, and
 the register with the Registry converter dictionary.  For example,
@@ -42,11 +42,18 @@ datetime objects::
     units.registry[datetime.date] = DateConverter()
 
 """
-import numpy as np
-from matplotlib.cbook import iterable, is_numlike, is_string_like
+from __future__ import (absolute_import, division, print_function,
+                        unicode_literals)
 
-class AxisInfo:
-    'information to support default axis labeling and tick labeling, and default limits'
+from matplotlib.externals import six
+
+from matplotlib.cbook import iterable, is_numlike
+import numpy as np
+
+
+class AxisInfo(object):
+    """information to support default axis labeling and tick labeling, and
+       default limits"""
     def __init__(self, majloc=None, minloc=None,
                  majfmt=None, minfmt=None, label=None,
                  default_limits=None):
@@ -65,7 +72,7 @@ class AxisInfo:
         self.default_limits = default_limits
 
 
-class ConversionInterface:
+class ConversionInterface(object):
     """
     The minimal interface for a converter to take custom instances (or
     sequences) and convert them to values mpl can use
@@ -106,6 +113,7 @@ class ConversionInterface:
         else:
             return is_numlike(x)
 
+
 class Registry(dict):
     """
     register types with conversion interface
@@ -117,7 +125,8 @@ class Registry(dict):
     def get_converter(self, x):
         'get the converter interface instance for x, or None'
 
-        if not len(self): return None # nothing registered
+        if not len(self):
+            return None  # nothing registered
         #DISABLED idx = id(x)
         #DISABLED cached = self._cached.get(idx)
         #DISABLED if cached is not None: return cached
@@ -128,13 +137,34 @@ class Registry(dict):
         if classx is not None:
             converter = self.get(classx)
 
+        if isinstance(x, np.ndarray) and x.size:
+            xravel = x.ravel()
+            try:
+                # pass the first value of x that is not masked back to
+                # get_converter
+                if not np.all(xravel.mask):
+                    # some elements are not masked
+                    converter = self.get_converter(
+                        xravel[np.argmin(xravel.mask)])
+                    return converter
+            except AttributeError:
+                # not a masked_array
+                # Make sure we don't recurse forever -- it's possible for
+                # ndarray subclasses to continue to return subclasses and
+                # not ever return a non-subclass for a single element.
+                next_item = xravel[0]
+                if (not isinstance(next_item, np.ndarray) or
+                    next_item.shape != x.shape):
+                    converter = self.get_converter(next_item)
+                return converter
+
         if converter is None and iterable(x):
             for thisx in x:
-                # Make sure that recursing might actually lead to a solution, if
-                # we are just going to re-examine another item of the same kind,
-                # then do not look at it.
+                # Make sure that recursing might actually lead to a solution,
+                # if we are just going to re-examine another item of the same
+                # kind, then do not look at it.
                 if classx and classx != getattr(thisx, '__class__', None):
-                    converter = self.get_converter( thisx )
+                    converter = self.get_converter(thisx)
                     return converter
 
         #DISABLED self._cached[idx] = converter

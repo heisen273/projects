@@ -6,13 +6,15 @@ Random Number Generation
 ==================== =========================================================
 Utility functions
 ==============================================================================
-random               Uniformly distributed values of a given shape.
+random_sample        Uniformly distributed floats over ``[0, 1)``.
+random               Alias for `random_sample`.
 bytes                Uniformly distributed random bytes.
 random_integers      Uniformly distributed integers in a given range.
-random_sample        Uniformly distributed floats in a given range.
 permutation          Randomly permute a sequence / generate a random sequence.
 shuffle              Randomly permute a sequence in place.
 seed                 Seed the random number generator.
+choice               Random sample from 1-D array.
+
 ==================== =========================================================
 
 ==================== =========================================================
@@ -82,6 +84,7 @@ set_state            Set state of generator.
 ==================== =========================================================
 
 """
+from __future__ import division, absolute_import, print_function
 
 depends = ['core']
 
@@ -90,6 +93,8 @@ __all__ = [
     'binomial',
     'bytes',
     'chisquare',
+    'choice',
+    'dirichlet',
     'exponential',
     'f',
     'gamma',

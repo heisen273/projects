@@ -1,4 +1,7 @@
 import matplotlib.pyplot as plt
+import FileDialog
+import Tkinter
+import numpy
 
 
 

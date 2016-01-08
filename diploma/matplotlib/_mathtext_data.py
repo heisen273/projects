@@ -1,9 +1,13 @@
 """
 font data tables for truetype and afm computer modern fonts
 """
-
 # this dict maps symbol names to fontnames, glyphindex.  To get the
 # glyph index from the character code, you have to use get_charmap
+from __future__ import (absolute_import, division, print_function,
+                        unicode_literals)
+
+from matplotlib.externals import six
+
 """
 from matplotlib.ft2font import FT2Font
 font = FT2Font('/usr/local/share/matplotlib/cmr10.ttf')
@@ -87,12 +91,12 @@ latex_to_bakoma = {
     r'\rho'                      : ('cmmi10',  39),
     r'\sigma'                    : ('cmmi10',  21),
     r'\tau'                      : ('cmmi10',  43),
-    r'\upsilon'                  : ('cmmi10',  25),
+    '\\upsilon'                  : ('cmmi10',  25),
     r'\phi'                      : ('cmmi10',  42),
     r'\chi'                      : ('cmmi10',  17),
     r'\psi'                      : ('cmmi10',  31),
     r'|'                         : ('cmsy10',  47),
-    r'\|'                        : ('cmsy10',  47),
+    r'\|'                        : ('cmsy10',  44),
     r'('                         : ('cmr10',  119),
     r'\leftparen'                : ('cmr10',  119),
     r'\rightparen'               : ('cmr10',   68),
@@ -128,7 +132,7 @@ latex_to_bakoma = {
     r'\Xi'                       : ('cmr10',   3),
     r'\Pi'                       : ('cmr10',  17),
     r'\Sigma'                    : ('cmr10',  10),
-    r'\Upsilon'                  : ('cmr10',  11),
+    '\\Upsilon'                  : ('cmr10',  11),
     r'\Phi'                      : ('cmr10',   9),
     r'\Psi'                      : ('cmr10',  15),
     r'\Omega'                    : ('cmr10',  12),
@@ -148,7 +152,7 @@ latex_to_bakoma = {
     r'\combiningdotabove'        : ('cmr10', 26), # for \dot
 
     r'\leftarrow'                : ('cmsy10',  10),
-    r'\uparrow'                  : ('cmsy10',  25),
+    '\\uparrow'                  : ('cmsy10',  25),
     r'\downarrow'                : ('cmsy10',  28),
     r'\leftrightarrow'           : ('cmsy10',  24),
     r'\nearrow'                  : ('cmsy10',  99),
@@ -156,7 +160,7 @@ latex_to_bakoma = {
     r'\simeq'                    : ('cmsy10', 108),
     r'\Leftarrow'                : ('cmsy10', 104),
     r'\Rightarrow'               : ('cmsy10', 112),
-    r'\Uparrow'                  : ('cmsy10',  60),
+    '\\Uparrow'                  : ('cmsy10',  60),
     r'\Downarrow'                : ('cmsy10',  68),
     r'\Leftrightarrow'           : ('cmsy10',  51),
     r'\nwarrow'                  : ('cmsy10',  65),
@@ -179,7 +183,7 @@ latex_to_bakoma = {
     r'\aleph'                    : ('cmsy10',  26),
     r'\cup'                      : ('cmsy10',   6),
     r'\cap'                      : ('cmsy10',  19),
-    r'\uplus'                    : ('cmsy10',  58),
+    '\\uplus'                    : ('cmsy10',  58),
     r'\wedge'                    : ('cmsy10',  43),
     r'\vee'                      : ('cmsy10',  96),
     r'\vdash'                    : ('cmsy10', 109),
@@ -193,8 +197,8 @@ latex_to_bakoma = {
     r'\mid'                      : ('cmsy10',  47),
     r'\vert'                     : ('cmsy10',  47),
     r'\Vert'                     : ('cmsy10',  44),
-    r'\updownarrow'              : ('cmsy10',  94),
-    r'\Updownarrow'              : ('cmsy10',  53),
+    '\\updownarrow'              : ('cmsy10',  94),
+    '\\Updownarrow'              : ('cmsy10',  53),
     r'\backslash'                : ('cmsy10', 126),
     r'\wr'                       : ('cmsy10', 101),
     r'\nabla'                    : ('cmsy10', 110),
@@ -295,7 +299,7 @@ latex_to_standard = {
     r'\rho'                      : ('psyr', 114),
     r'\sigma'                    : ('psyr', 115),
     r'\tau'                      : ('psyr', 116),
-    r'\upsilon'                  : ('psyr', 117),
+    '\\upsilon'                  : ('psyr', 117),
     r'\varpi'                    : ('psyr', 118),
     r'\omega'                    : ('psyr', 119),
     r'\xi'                       : ('psyr', 120),
@@ -310,7 +314,7 @@ latex_to_standard = {
     r'\spadesuit'                : ('psyr', 170),
     r'\leftrightarrow'           : ('psyr', 171),
     r'\leftarrow'                : ('psyr', 172),
-    r'\uparrow'                  : ('psyr', 173),
+    '\\uparrow'                  : ('psyr', 173),
     r'\rightarrow'               : ('psyr', 174),
     r'\downarrow'                : ('psyr', 175),
     r'\pm'                       : ('psyr', 176),
@@ -349,12 +353,12 @@ latex_to_standard = {
     r'\surd'                     : ('psyr', 214),
     r'\__sqrt__'                 : ('psyr', 214),
     r'\cdot'                     : ('psyr', 215),
-    r'\urcorner'                 : ('psyr', 216),
+    '\\urcorner'                 : ('psyr', 216),
     r'\vee'                      : ('psyr', 217),
     r'\wedge'                    : ('psyr', 218),
     r'\Leftrightarrow'           : ('psyr', 219),
     r'\Leftarrow'                : ('psyr', 220),
-    r'\Uparrow'                  : ('psyr', 221),
+    '\\Uparrow'                  : ('psyr', 221),
     r'\Rightarrow'               : ('psyr', 222),
     r'\Downarrow'                : ('psyr', 223),
     r'\Diamond'                  : ('psyr', 224),
@@ -366,39 +370,39 @@ latex_to_standard = {
     r'\lceil'                    : ('psyr', 233),
     r'\lbrace'                   : ('psyr', 123),
     r'\Psi'                      : ('psyr',  89),
-    r'\bot'                      : ('psyr', 0136),
-    r'\Omega'                    : ('psyr', 0127),
-    r'\leftbracket'              : ('psyr', 0133),
-    r'\rightbracket'             : ('psyr', 0135),
+    r'\bot'                      : ('psyr', 0o136),
+    r'\Omega'                    : ('psyr', 0o127),
+    r'\leftbracket'              : ('psyr', 0o133),
+    r'\rightbracket'             : ('psyr', 0o135),
     r'\leftbrace'                : ('psyr', 123),
-    r'\leftparen'                : ('psyr', 050),
-    r'\prime'                    : ('psyr', 0242),
-    r'\sharp'                    : ('psyr', 043),
-    r'\slash'                    : ('psyr', 057),
-    r'\Lamda'                    : ('psyr', 0114),
-    r'\neg'                      : ('psyr', 0330),
-    r'\Upsilon'                  : ('psyr', 0241),
-    r'\rightbrace'               : ('psyr', 0175),
-    r'\rfloor'                   : ('psyr', 0373),
-    r'\lambda'                   : ('psyr', 0154),
-    r'\to'                       : ('psyr', 0256),
-    r'\Xi'                       : ('psyr', 0130),
-    r'\emptyset'                 : ('psyr', 0306),
-    r'\lfloor'                   : ('psyr', 0353),
-    r'\rightparen'               : ('psyr', 051),
-    r'\rceil'                    : ('psyr', 0371),
-    r'\ni'                       : ('psyr', 047),
-    r'\epsilon'                  : ('psyr', 0145),
-    r'\Theta'                    : ('psyr', 0121),
-    r'\langle'                   : ('psyr', 0341),
-    r'\leftangle'                : ('psyr', 0341),
-    r'\rangle'                   : ('psyr', 0361),
-    r'\rightangle'               : ('psyr', 0361),
-    r'\rbrace'                   : ('psyr', 0175),
-    r'\circ'                     : ('psyr', 0260),
-    r'\diamond'                  : ('psyr', 0340),
-    r'\mu'                       : ('psyr', 0155),
-    r'\mid'                      : ('psyr', 0352),
+    r'\leftparen'                : ('psyr', 0o50),
+    r'\prime'                    : ('psyr', 0o242),
+    r'\sharp'                    : ('psyr', 0o43),
+    r'\slash'                    : ('psyr', 0o57),
+    r'\Lamda'                    : ('psyr', 0o114),
+    r'\neg'                      : ('psyr', 0o330),
+    '\\Upsilon'                  : ('psyr', 0o241),
+    r'\rightbrace'               : ('psyr', 0o175),
+    r'\rfloor'                   : ('psyr', 0o373),
+    r'\lambda'                   : ('psyr', 0o154),
+    r'\to'                       : ('psyr', 0o256),
+    r'\Xi'                       : ('psyr', 0o130),
+    r'\emptyset'                 : ('psyr', 0o306),
+    r'\lfloor'                   : ('psyr', 0o353),
+    r'\rightparen'               : ('psyr', 0o51),
+    r'\rceil'                    : ('psyr', 0o371),
+    r'\ni'                       : ('psyr', 0o47),
+    r'\epsilon'                  : ('psyr', 0o145),
+    r'\Theta'                    : ('psyr', 0o121),
+    r'\langle'                   : ('psyr', 0o341),
+    r'\leftangle'                : ('psyr', 0o341),
+    r'\rangle'                   : ('psyr', 0o361),
+    r'\rightangle'               : ('psyr', 0o361),
+    r'\rbrace'                   : ('psyr', 0o175),
+    r'\circ'                     : ('psyr', 0o260),
+    r'\diamond'                  : ('psyr', 0o340),
+    r'\mu'                       : ('psyr', 0o155),
+    r'\mid'                      : ('psyr', 0o352),
     r'\imath'                    : ('pncri8a', 105),
     r'\%'                        : ('pncr8a',  37),
     r'\$'                        : ('pncr8a',  36),
@@ -1763,7 +1767,7 @@ type12uni = {
     'uni044B'        : 1099
 }
 
-uni2type1 = dict([(v,k) for k,v in type12uni.items()])
+uni2type1 = dict(((v,k) for k,v in six.iteritems(type12uni)))
 
 tex2uni = {
     'widehat'                  : 0x0302,
@@ -1942,7 +1946,6 @@ tex2uni = {
     'boxminus'                 : 8863,
     'equiv'                    : 8801,
     'Lleftarrow'               : 8666,
-    'thinspace'                : 8201,
     'll'                       : 8810,
     'Cup'                      : 8915,
     'measeq'                   : 8798,
@@ -2165,7 +2168,6 @@ tex2uni = {
     'cdots'                    : 8943,
     'hat'                      : 770,
     'eqgtr'                    : 8925,
-    'enspace'                  : 8194,
     'psi'                      : 968,
     'frown'                    : 8994,
     'acute'                    : 769,
@@ -2277,7 +2279,7 @@ tex2uni = {
     'obar'                     : 9021,
     'supseteq'                 : 8839,
     'nu'                       : 957,
-    'AA'                       : 8491,
+    'AA'                       : 197,
     'AE'                       : 198,
     'models'                   : 8871,
     'ominus'                   : 8854,
@@ -2494,7 +2496,7 @@ stix_virtual_fonts = {
         (0x0049, 0x0049, 'it', 0x2110),  # I
         (0x004a, 0x004b, 'it', 0x1d4a5), # J-K
         (0x004c, 0x004c, 'it', 0x2112),  # L
-        (0x004d, 0x003d, 'it', 0x2133),  # M
+        (0x004d, 0x004d, 'it', 0x2133),  # M
         (0x004e, 0x0051, 'it', 0x1d4a9), # N-Q
         (0x0052, 0x0052, 'it', 0x211b),  # R
         (0x0053, 0x005a, 'it', 0x1d4ae), # S-Z
