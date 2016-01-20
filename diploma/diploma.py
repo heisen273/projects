@@ -1,44 +1,67 @@
 #!/usr/bin/env python
+from fractions import Fraction
 import matplotlib.pyplot as plt
 import FileDialog
 import Tkinter
 import numpy
 
 
-def diploma():
-    print 'SiHx + 2 H2O = SiO2+ (2+x/2) H2'
-    mb = False
-    xb = False
-    while mb != True:
-        mass = int(raw_input('Enter SiHx mass in gramms: '))
-        if mass > 0:
-            mb = True
-    while xb != True:
-        x = int(raw_input('Enter x in range [0,3]: '))
-        if x in range(4):
-            xb = True
+def isfraction(input):
+    try:
+        return Fraction(input) != None;
+    except ValueError:
+        return False;
+def isfloat(input):
+    try:
+        return float(input) != None;
+    except ValueError:
+        return False;
 
-    result0 = (2 * 22.4 * mass) / (28)
-    result1 = (2.5 * 22.4 * mass) / (29)
-    result2 = (3 * 22.4 * mass) / (30)
-    result3 = (3.5 * 22.4 * mass) / (31)
+def diploma():
+
+    print 'SiHx + 2 H2O = SiO2+ (2+x/2) H2'
+    mass_boolean = False
+    x_boolean = False
+
+    while mass_boolean != True:
+        mass = raw_input('Enter SiHx mass in gramms: ')
+        if isfraction(mass) == True:
+            mass = Fraction(mass)
+            if mass > 0:
+                mass_boolean = True
+            else:
+                mass_boolean = False
+        elif isfloat(mass) == True:
+            mass_boolean = True
+        else:
+            print 'Please, enter valid value'
+            mass_boolean=False
+    while x_boolean != True:
+        x = raw_input('Enter x in range [0,3]: ')
+        if x.isdigit() and int(x) in range(4):
+            x_boolean = True
+
+    result0 = (2 * 22.4 * float(mass)) / (28)
+    result1 = (2.5 * 22.4 * float(mass)) / (29)
+    result2 = (3 * 22.4 * float(mass)) / (30)
+    result3 = (3.5 * 22.4 * float(mass)) / (31)
     print ''
     print ''
-    if x == 0:
+    if int(x) == 0:
         print ''
         print "Si + 2H2O = SiO2 + 2H2 "
         print result0, "gramms of Hydrogen was allocated"
 
-    elif x == 1:
+    elif int(x) == 1:
         print ''
         print "2SiH + 4H2O = 2SiO2 + 5H2 "
         print result1, "gramms of Hydrogen was allocated"
 
-    elif x == 2:
+    elif int(x) == 2:
         print ''
         print "SiH2 + 2 H2O = SiO2 + 3H2"
         print result2, "gramms of Hydrogen was allocated"
-    elif x == 3:
+    elif int(x) == 3:
         print ''
         print "2SiH3 + 4H2O = 2SiO2 + 7H2"
         print result3, "gramms of Hydrogen was allocated"
@@ -49,4 +72,21 @@ def diploma():
     plt.show()
 
 
+
+
+
 diploma()
+
+def repeat():
+    repeating = True
+    while repeating is True:
+        print 'Repeat calculations with different values?'
+        decision = raw_input('y/n?')
+        if decision == 'n':
+            print 'OK, terminating . . .'
+            repeating = False
+        elif decision == 'y':
+            diploma()
+        else:
+            print 'Your decision must be either \"y\" or \"n\".'
+repeat()
