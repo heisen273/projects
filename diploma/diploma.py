@@ -36,7 +36,7 @@ class app():
         output_labeltext.set('Program Output')
         output_label = Label(self.window, textvariable=output_labeltext, height=1)
         output_label.grid(row=3, column=0)
-        values = ['quit', 'plot', 'clear', 'close']
+        values = ['quit', 'plot', 'clear', 'close', 'reset output']
 
         for txt in values:
             padx = 6
@@ -58,6 +58,11 @@ class app():
                 btn = Button(self.window, height=2, width=4, padx=padx, pady=pady, text=txt,
                              command=lambda: self.quit())
                 btn.grid(row=3, column=1, padx=1, pady=1)
+            elif txt == 'reset output':
+                btn = Button(self.window, height=2, width=10, padx=padx, pady=pady, text=txt,
+                             command=lambda: self.reset_output())
+                btn.grid(row=4, column=1, padx=1, pady=1)
+
         self.output.insert(INSERT, 'SiHx + 2 H2O = SiO2+ (2+x/2) H2')
         self.window.mainloop()
 
@@ -73,6 +78,9 @@ class app():
     def close(self):
         plt.close('all')
 
+    def reset_output(self):
+        self.output.delete('1.0', END)
+        self.output.insert(INSERT, 'SiHx + 2 H2O = SiO2+ (2+x/2) H2')
     def plot(self, mass):
         try:
             mass = Fraction(self.mass_string.get())
@@ -105,30 +113,34 @@ class app():
             self.output.insert(INSERT, "\n\nSi + 2H2O = SiO2 + 2H2 \n\n")
             self.output.insert(INSERT, result0)
             self.output.insert(INSERT, " liters of Hydrogen was allocated")
+            self.output.see(END)
         elif int(x) == 1:
             self.output.insert(INSERT, '\nx ')
             self.output.insert(INSERT, '= 1')
             self.output.insert(INSERT, "\n\n2SiH + 4H2O = 2SiO2 + 5H2 \n\n")
             self.output.insert(INSERT, result1)
             self.output.insert(INSERT, " liters of Hydrogen was allocated")
+            self.output.see(END)
         elif int(x) == 2:
             self.output.insert(INSERT, '\nx ')
             self.output.insert(INSERT, '= 2')
             self.output.insert(INSERT, "\n\nSiH2 + 2 H2O = SiO2 + 3H2 \n\n")
             self.output.insert(INSERT, result2)
             self.output.insert(INSERT, " liters of Hydrogen was allocated")
+            self.output.see(END)
         elif int(x) == 3:
             self.output.insert(INSERT, '\nx ')
             self.output.insert(INSERT, '= 3')
             self.output.insert(INSERT, "\n\n2SiH3 + 4H2O = 2SiO2 + 7H2 \n\n")
             self.output.insert(INSERT, result3)
             self.output.insert(INSERT, " liters of Hydrogen was allocated")
+            self.output.see(END)
 
         plt.ion()
         plt.plot([result0, result1, result2, result3], [0, 1, 2, 3], 'ro-')
         plt.axis([0, result3 + 200, 0, 4])
         plt.ylabel('X')
-        plt.xlabel('AMOUNT')
+        plt.xlabel('H2 AMOUNT, liters')
         plt.autoscale(enable=True, axis='both', tight=None)
         plt.show()
 
