@@ -2,7 +2,6 @@
 from __future__ import division
 from fractions import Fraction
 import matplotlib.pyplot as plt
-import wx
 import FileDialog
 from Tkinter import *
 import numpy
