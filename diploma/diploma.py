@@ -25,6 +25,7 @@ class app():
 
         self.x_string = StringVar()
         x_list = OptionMenu(self.window, self.x_string, '0','1','2','3')
+        x_list.configure(width=8)
         x_list.grid(row=1, column=1, columnspan=10)
 
         x_labeltext = StringVar()
@@ -40,7 +41,7 @@ class app():
         output_labeltext.set('Program Output')
         output_label = Label(self.window, textvariable=output_labeltext, height=1)
         output_label.grid(row=3, column=0)
-        values = ['quit', 'plot', 'clear', 'close', 'reset output', 'save output']
+        values = ['quit app', 'plot', 'clear', 'close plot', 'reset output', 'save output']
 
         for txt in values:
             padx = 6
@@ -49,25 +50,25 @@ class app():
             if txt == 'clear':
                 btn = Button(self.window, height=2, width=4, padx=padx, pady=pady, text=txt,
                              command=lambda: self.clear())
+                btn.grid(row=3, column=1, padx=1, pady=1)
+            elif txt == 'quit app':
+                btn = Button(self.window, height=2, width=7, padx=padx, pady=pady, text=txt,
+                             command=lambda: self.quit())
                 btn.grid(row=3, column=2, padx=1, pady=1)
-            elif txt == 'close':
-                btn = Button(self.window, height=2, width=5, padx=padx, pady=pady, text=txt,
+            elif txt == 'close plot':
+                btn = Button(self.window, height=2, width=8, padx=padx, pady=pady, text=txt,
                              command=lambda: self.close())
                 btn.grid(row=2, column=2, padx=1, pady=1)
             elif txt == 'plot':
                 btn = Button(self.window, height=2, width=4, padx=padx, pady=pady, text=txt,
                              command=lambda: self.plot(mass))
                 btn.grid(row=2, column=1, padx=1, pady=1)
-            elif txt == 'quit':
-                btn = Button(self.window, height=2, width=4, padx=padx, pady=pady, text=txt,
-                             command=lambda: self.quit())
-                btn.grid(row=3, column=1, padx=1, pady=1)
             elif txt == 'reset output':
-                btn = Button(self.window, height=2, width=10, padx=padx, pady=pady, text=txt,
+                btn = Button(self.window, height=2, width=9, padx=padx, pady=pady, text=txt,
                              command=lambda: self.reset_output())
                 btn.grid(row=4, column=1, padx=1, pady=1)
             elif txt == 'save output':
-                btn = Button(self.window, height=2, width=10, padx=padx, pady=pady, text=txt,
+                btn = Button(self.window, height=2, width=9, padx=padx, pady=pady, text=txt,
                              command=lambda: self.file_save())
                 btn.grid(row=4, column=2, padx=1, pady=1)
 
