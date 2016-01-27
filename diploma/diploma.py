@@ -76,11 +76,11 @@ class app():
         self.window.mainloop()
     def file_save(self):
         f = tkFileDialog.asksaveasfile(mode='w', defaultextension=".txt")
-        if f is None: # asksaveasfile return `None` if dialog closed with "cancel".
+        if f is None:
             return
-        text2save = str(self.output.get(1.0, END)) # starts from `1.0`, not `0.0`
+        text2save = str(self.output.get(1.0, END))
         f.write(text2save)
-        f.close() # `()` was missing.
+        f.close()
 
     def quit(self):
         self.window.destroy()
