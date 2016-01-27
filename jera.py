@@ -3,7 +3,7 @@ import sys,time
 import re
 print("Input must fit format /path/to/file.txt")
 path=raw_input("Path to *.txt: ")
-tmp = []
+#tmp = []
 def antohin_parser(path):
     iterator = 0
     f = open(path, 'r')
@@ -12,23 +12,19 @@ def antohin_parser(path):
     f.close()
     for item in query:
         item = item.replace("'",'')
-        tmp.append(item)
-        for i in tmp:
-            i = i.split(', ')
-            if i[4] == 'code_name':
-                iterator += 1
-            elif i[4] == 'code_name,days':
-        
-        print iteratorn
-        print len(query)
+        item.split(" ,")
+        print item
+
+    print iterator
+    print len(query)
 antohin_parser(path)
 
 
 
 
 
-
-
+#udalaem v [0] i [1] elemente vsee s 19 simvola
+"""
 lets say I have alot of lines which in a list
 '2015....  '
 '2014....  '
@@ -48,4 +44,4 @@ for every element of list:
     keep going untill the end
 in the end i must get something like this:
 
-    TMP[4]* value: iterator    -- for each unique TMP[4]
+    TMP[4]* value: iterator    -- for each unique TMP[4]"""
