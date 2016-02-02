@@ -16,15 +16,13 @@ class app():
         mass = Entry(self.window, textvariable=self.mass_string)
         mass.grid(row=0, column=1, columnspan=2)
 
-
         mass_labeltext = StringVar()
         mass_labeltext.set('Enter SiHx mass in gramms:')
         mass_label = Label(self.window, textvariable=mass_labeltext, height=1)
         mass_label.grid(row=0, column=0)
 
-
         self.x_string = StringVar()
-        x_list = OptionMenu(self.window, self.x_string, '0','1','2','3')
+        x_list = OptionMenu(self.window, self.x_string, '0', '1', '2', '3')
         x_list.configure(width=8)
         x_list.grid(row=1, column=1, columnspan=10)
 
@@ -32,7 +30,6 @@ class app():
         x_labeltext.set('Enter x in range [0,3]:')
         x_label = Label(self.window, textvariable=x_labeltext, height=1)
         x_label.grid(row=1, column=0)
-
 
         self.output = Text(self.window, height=10, width=60, highlightbackground='black')
         self.output.grid(row=4, column=0)
@@ -74,6 +71,7 @@ class app():
 
         self.output.insert(INSERT, 'SiHx + 2 H2O = SiO2+ (2+x/2) H2')
         self.window.mainloop()
+
     def file_save(self):
         f = tkFileDialog.asksaveasfile(mode='w', defaultextension=".txt")
         if f is None:
@@ -84,7 +82,6 @@ class app():
 
     def quit(self):
         self.window.destroy()
-
 
     def clear(self):
         self.mass_string.set('')
@@ -117,8 +114,6 @@ class app():
         except Exception:
             self.x_string.set('error')
             return False;
-
-
 
         result0 = (2 * 22.4 * mass) / (28)
         result1 = (2.5 * 22.4 * mass) / (29)
