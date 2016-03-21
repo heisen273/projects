@@ -4,17 +4,48 @@ from fractions import Fraction
 import matplotlib.pyplot as plt
 import FileDialog
 from Tkinter import *
+from idlelib.ToolTip import *
 import tkFileDialog
 import numpy
 
+class CreateToolTip(object):
+    '''
+    create a tooltip for a given widget
+    '''
+    def __init__(self, widget, text='widget info'):
+        self.widget = widget
+        self.text = text
+        self.widget.bind("<Enter>", self.enter)
+        self.widget.bind("<Leave>", self.close)
+
+    def enter(self, event=None):
+        x = y = 0
+        x, y, cx, cy = self.widget.bbox("insert")
+        x += self.widget.winfo_rootx() + 25
+        y += self.widget.winfo_rooty() + 20
+        # creates a toplevel window
+        self.tw = Toplevel(self.widget)
+        # Leaves only the label and removes the app window
+        self.tw.wm_overrideredirect(True)
+        self.tw.wm_geometry("+%d+%d" % (x, y))
+        label = Label(self.tw, text=self.text, justify='left',
+                              background='white', relief='solid', borderwidth=1,
+                              font=("times", "13", "normal"))
+        label.pack(ipadx=1)
+
+    def close(self, event=None):
+        if self.tw:
+            self.tw.destroy()
 
 class app():
     def __init__(self):
         self.window = Tk()
+        self.window.resizable(0,0)
         self.window.title('app')
         self.mass_string = StringVar()
         mass = Entry(self.window, textvariable=self.mass_string)
         mass.grid(row=0, column=1, columnspan=2)
+        mass_ttp = CreateToolTip(mass, "mass must be >=0")
 
         mass_labeltext = StringVar()
         mass_labeltext.set('Enter SiHx mass in gramms:')
@@ -165,6 +196,4 @@ class app():
         plt.xlabel('H2 AMOUNT, liters')
         plt.autoscale(enable=True, axis='both', tight=None)
         plt.show()
-
-
 app()
